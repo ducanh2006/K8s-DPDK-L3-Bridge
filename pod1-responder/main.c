@@ -4,7 +4,6 @@
 #include <signal.h>
 #include <unistd.h>
 #include <getopt.h>
-#include <arpa/inet.h>
 #include <inttypes.h>
 
 #include "dpdk_init.h"
@@ -70,8 +69,7 @@ int main(int argc, char **argv)
     /* 1. Khởi tạo DPDK EAL và cổng mạng virtio-user */
     uint16_t nb_ports = 0;
     int eal_consumed = 0;
-    struct rte_mempool *pool = init_dpdk_subsystem(argc, argv, &nb_ports, &eal_consumed);
-    if (!pool) {
+    if (!init_dpdk_subsystem(argc, argv, &nb_ports, &eal_consumed)) {
         return 1;
     }
 
@@ -87,12 +85,21 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    /* 3. Nạp bảng luật định tuyến L3 cho Pod 1 */
+    struct l3_table *table = l3_table_init("POD1_L3_TABLE", rte_socket_id());
+    if (table) {
+        if (l3_table_load_file(table, cfg.config_path) < 0) {
+            l3_table_load_file(table, "pod1-responder/routes.conf");
+        }
+    }
+
     printf("[Pod1] Ready to receive high-throughput traffic from Pod 0 via OVS!\n");
     printf("-----------------------------------------------------\n");
 
     /* Thống kê tích lũy */
     uint64_t total_rx_pkts = 0;
     uint64_t total_rx_bytes = 0;
+    uint64_t total_l3_dropped = 0;
     uint64_t total_tcp_pkts = 0;
     uint64_t total_udp_pkts = 0;
     uint64_t total_icmp_pkts = 0;
@@ -101,6 +108,7 @@ int main(int argc, char **argv)
     /* Thống kê chu kỳ 1 giây */
     uint64_t period_rx_pkts = 0;
     uint64_t period_rx_bytes = 0;
+    uint64_t period_l3_dropped = 0;
     uint64_t period_tcp_pkts = 0;
     uint64_t period_udp_pkts = 0;
     uint64_t period_icmp_pkts = 0;
@@ -110,7 +118,7 @@ int main(int argc, char **argv)
 
     struct rte_mbuf *rx_pkts[BURST_SIZE];
 
-    /* 3. Vòng lặp nhận và phân tích gói tin */
+    /* 4. Vòng lặp nhận và phân tích gói tin */
     while (!force_quit) {
         uint16_t nb_rx = rte_eth_rx_burst(port_id, 0, rx_pkts, BURST_SIZE);
 
@@ -129,6 +137,7 @@ int main(int argc, char **argv)
 
                 period_rx_pkts = 0;
                 period_rx_bytes = 0;
+                period_l3_dropped = 0;
                 period_tcp_pkts = 0;
                 period_udp_pkts = 0;
                 period_icmp_pkts = 0;
@@ -151,6 +160,18 @@ int main(int argc, char **argv)
 
             if (eth_type == RTE_ETHER_TYPE_IPV4) {
                 struct rte_ipv4_hdr *ip = (struct rte_ipv4_hdr *)((uint8_t *)eth + sizeof(struct rte_ether_hdr));
+
+                /* Kiểm tra bảng luật L3 nếu có */
+                if (table) {
+                    l3_action_t act = l3_table_lookup(table, ip->dst_addr);
+                    if (act == L3_ACTION_DROP) {
+                        period_l3_dropped++;
+                        total_l3_dropped++;
+                        rte_pktmbuf_free(m);
+                        continue;
+                    }
+                }
+
                 if (ip->next_proto_id == IPPROTO_TCP) {
                     period_tcp_pkts++;
                     total_tcp_pkts++;
@@ -185,6 +206,7 @@ int main(int argc, char **argv)
 
             period_rx_pkts = 0;
             period_rx_bytes = 0;
+            period_l3_dropped = 0;
             period_tcp_pkts = 0;
             period_udp_pkts = 0;
             period_icmp_pkts = 0;
@@ -197,12 +219,16 @@ int main(int argc, char **argv)
     printf("             Pod 1 Final Statistics Summary          \n");
     printf("=====================================================\n");
     printf("Total Received   : %" PRIu64 " pkts (%.2f MB)\n", total_rx_pkts, (double)total_rx_bytes / (1024.0 * 1024.0));
+    printf("L3 Dropped       : %" PRIu64 " pkts\n", total_l3_dropped);
     printf("TCP Packets      : %" PRIu64 " (%.1f%%)\n", total_tcp_pkts, total_rx_pkts ? (double)total_tcp_pkts * 100.0 / total_rx_pkts : 0.0);
     printf("UDP Packets      : %" PRIu64 " (%.1f%%)\n", total_udp_pkts, total_rx_pkts ? (double)total_udp_pkts * 100.0 / total_rx_pkts : 0.0);
     printf("ICMP Packets     : %" PRIu64 " (%.1f%%)\n", total_icmp_pkts, total_rx_pkts ? (double)total_icmp_pkts * 100.0 / total_rx_pkts : 0.0);
     printf("Other Packets    : %" PRIu64 "\n", total_other_pkts);
     printf("=====================================================\n");
 
+    if (table) {
+        l3_table_free(table);
+    }
     cleanup_dpdk_subsystem(nb_ports);
     return 0;
 }

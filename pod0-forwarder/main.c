@@ -70,8 +70,7 @@ int main(int argc, char **argv)
     /* 1. Khởi tạo DPDK EAL và toàn bộ cổng mạng */
     uint16_t nb_ports = 0;
     int eal_consumed = 0;
-    struct rte_mempool *pool = init_dpdk_subsystem(argc, argv, &nb_ports, &eal_consumed);
-    if (!pool) {
+    if (!init_dpdk_subsystem(argc, argv, &nb_ports, &eal_consumed)) {
         return 1;
     }
 
