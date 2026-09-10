@@ -4,7 +4,6 @@
 #include <signal.h>
 #include <unistd.h>
 #include <getopt.h>
-#include <arpa/inet.h>
 #include <inttypes.h>
 
 #include "dpdk_init.h"
