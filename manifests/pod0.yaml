@@ -17,12 +17,10 @@ spec:
     args:
       - "-l", "1-2"
       - "--no-pci"
+      - "--vdev=net_pcap0,rx_pcap=/data/balanced_traffic.pcap,infinite_rx=1"
       - "--vdev=virtio_user0,path=/var/run/openvswitch/vhost-user-0,server=1"
       - "--"
       - "--config", "/app/routes.conf"
-      - "--src-ip", "10.0.0.1"
-      - "--dst-ip", "10.0.0.2"
-      - "--interval", "1000"
     resources:
       requests:
         memory: "512Mi"
@@ -31,11 +29,17 @@ spec:
         memory: "1Gi"
         cpu: "2"
     volumeMounts:
+    - name: pcap-data
+      mountPath: /data
+      readOnly: true
     - name: hugepages
       mountPath: /dev/hugepages
     - name: ovs-sockets
       mountPath: /var/run/openvswitch
   volumes:
+  - name: pcap-data
+    hostPath:
+      path: /mnt/70E63C66E63C2EAA/Users/ADMIN/Desktop/coding/K8s-DPDK-L3-Bridge/data
   - name: hugepages
     hostPath:
       path: /dev/hugepages

@@ -12,20 +12,26 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
 cd "$ROOT_DIR"
 
+# Tự động phát hiện quyền docker
+DOCKER_CMD="docker"
+if ! docker ps &>/dev/null; then
+    DOCKER_CMD="sudo docker"
+fi
+
 echo -e "\033[1;34m[1/3] Đảm bảo binary và thư viện DPDK đã được build...\033[0m"
 bash scripts/03_build_all.sh
 
 echo -e "\n\033[1;34m[2/3] Build Docker image pod0:latest...\033[0m"
-docker build -f pod0-forwarder/Dockerfile -t pod0:latest .
+$DOCKER_CMD build -f pod0-forwarder/Dockerfile -t pod0:latest .
 
 echo -e "\n\033[1;34m[3/3] Build Docker image pod1:latest...\033[0m"
-docker build -f pod1-responder/Dockerfile -t pod1:latest .
+$DOCKER_CMD build -f pod1-responder/Dockerfile -t pod1:latest .
 
 # Nếu đang chạy K3s, import trực tiếp vào K3s container runtime
 if command -v k3s &>/dev/null && systemctl is-active --quiet k3s; then
     echo -e "\n\033[1;33mĐang nạp image vào K3s containerd store...\033[0m"
-    docker save pod0:latest | sudo k3s ctr images import -
-    docker save pod1:latest | sudo k3s ctr images import -
+    $DOCKER_CMD save pod0:latest | sudo k3s ctr images import -
+    $DOCKER_CMD save pod1:latest | sudo k3s ctr images import -
     echo "[OK] Đã import image vào K3s."
 fi
 
