@@ -30,33 +30,40 @@ int main(int argc, char **argv)
     printf("Loaded %d rules from pod0-forwarder/routes.conf\n", loaded);
     assert(loaded >= 2);
 
-    /* 2. Test IP hợp lệ (10.0.0.2) -> Phải FORWARD */
+    /* 2. Test IP Google (172.217.182.112) -> Phải FORWARD */
     struct in_addr ip1;
-    inet_pton(AF_INET, "10.0.0.2", &ip1);
+    inet_pton(AF_INET, "172.217.182.112", &ip1);
     l3_action_t act1 = l3_table_lookup(table, ip1.s_addr);
-    printf("Lookup 10.0.0.2       -> %s (Expected: FORWARD)\n", act1 == L3_ACTION_FORWARD ? "FORWARD" : "DROP");
+    printf("Lookup 172.217.182.112 (Google) -> %s (Expected: FORWARD)\n", act1 == L3_ACTION_FORWARD ? "FORWARD" : "DROP");
     assert(act1 == L3_ACTION_FORWARD);
 
-    /* 3. Test IP hợp lệ dải phụ (192.168.10.50) -> Phải FORWARD */
+    /* 3. Test IP Google dải 142.250.0.0/16 -> Phải FORWARD */
     struct in_addr ip2;
-    inet_pton(AF_INET, "192.168.10.50", &ip2);
+    inet_pton(AF_INET, "142.250.14.95", &ip2);
     l3_action_t act2 = l3_table_lookup(table, ip2.s_addr);
-    printf("Lookup 192.168.10.50  -> %s (Expected: FORWARD)\n", act2 == L3_ACTION_FORWARD ? "FORWARD" : "DROP");
+    printf("Lookup 142.250.14.95   (Google) -> %s (Expected: FORWARD)\n", act2 == L3_ACTION_FORWARD ? "FORWARD" : "DROP");
     assert(act2 == L3_ACTION_FORWARD);
 
-    /* 4. Test IP ngoài dải (192.168.99.10) -> Phải DROP */
+    /* 4. Test IP Meta (157.240.4.224) -> Phải DROP */
     struct in_addr ip3;
-    inet_pton(AF_INET, "192.168.99.10", &ip3);
+    inet_pton(AF_INET, "157.240.4.224", &ip3);
     l3_action_t act3 = l3_table_lookup(table, ip3.s_addr);
-    printf("Lookup 192.168.99.10  -> %s (Expected: DROP)\n", act3 == L3_ACTION_DROP ? "DROP" : "FORWARD");
+    printf("Lookup 157.240.4.224   (Meta)   -> %s (Expected: DROP)\n", act3 == L3_ACTION_DROP ? "DROP" : "FORWARD");
     assert(act3 == L3_ACTION_DROP);
 
-    /* 5. Test IP public internet (8.8.8.8) -> Phải DROP */
+    /* 5. Test IP AWS (96.127.66.138) -> Phải DROP */
     struct in_addr ip4;
-    inet_pton(AF_INET, "8.8.8.8", &ip4);
+    inet_pton(AF_INET, "96.127.66.138", &ip4);
     l3_action_t act4 = l3_table_lookup(table, ip4.s_addr);
-    printf("Lookup 8.8.8.8        -> %s (Expected: DROP)\n", act4 == L3_ACTION_DROP ? "DROP" : "FORWARD");
+    printf("Lookup 96.127.66.138   (AWS)    -> %s (Expected: DROP)\n", act4 == L3_ACTION_DROP ? "DROP" : "FORWARD");
     assert(act4 == L3_ACTION_DROP);
+
+    /* 6. Test IP khác (8.8.8.8) -> Phải FORWARD theo default route */
+    struct in_addr ip5;
+    inet_pton(AF_INET, "8.8.8.8", &ip5);
+    l3_action_t act5 = l3_table_lookup(table, ip5.s_addr);
+    printf("Lookup 8.8.8.8         (DNS)    -> %s (Expected: FORWARD)\n", act5 == L3_ACTION_FORWARD ? "FORWARD" : "DROP");
+    assert(act5 == L3_ACTION_FORWARD);
 
     l3_table_free(table);
     rte_eal_cleanup();
