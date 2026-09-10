@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dpdk-pod0
+  labels:
+    app: dpdk-l3-bridge
+    role: forwarder
+spec:
+  restartPolicy: Never
+  containers:
+  - name: pod0-forwarder
+    image: pod0:latest
+    imagePullPolicy: IfNotPresent
+    securityContext:
+      privileged: true
+    command: ["/app/pod0_app"]
+    args:
+      - "-l", "1-2"
+      - "--no-pci"
+      - "--vdev=virtio_user0,path=/var/run/openvswitch/vhost-user-0,server=1"
+      - "--"
+      - "--config", "/app/routes.conf"
+      - "--src-ip", "10.0.0.1"
+      - "--dst-ip", "10.0.0.2"
+      - "--interval", "1000"
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "1"
+      limits:
+        memory: "1Gi"
+        cpu: "2"
+    volumeMounts:
+    - name: hugepages
+      mountPath: /dev/hugepages
+    - name: ovs-sockets
+      mountPath: /var/run/openvswitch
+  volumes:
+  - name: hugepages
+    hostPath:
+      path: /dev/hugepages
+  - name: ovs-sockets
+    hostPath:
+      path: /var/run/openvswitch
