@@ -1,0 +1,111 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ovs-dpdk
+  labels:
+    app: dpdk-l3-bridge
+    role: switch
+spec:
+  restartPolicy: Never
+  hostNetwork: true
+  containers:
+  - name: ovs-switch
+    image: ubuntu:24.04
+    imagePullPolicy: IfNotPresent
+    securityContext:
+      privileged: true
+    command: ["/bin/bash", "-c"]
+    args:
+      - |
+        set -e
+        echo "====================================================="
+        echo "   KHỞI ĐỘNG OVS-DPDK TRONG KUBERNETES POD          "
+        echo "====================================================="
+        
+        mkdir -p /var/run/openvswitch /etc/openvswitch /var/log/openvswitch
+        
+        # 1. Khởi tạo database Open vSwitch nếu chưa tồn tại
+        if [ ! -f /etc/openvswitch/conf.db ]; then
+            echo "[OVS-Pod] Tạo database OVS mới..."
+            /usr/bin/ovsdb-tool create /etc/openvswitch/conf.db /usr/share/openvswitch/vswitch.ovsschema
+        fi
+
+        # 2. Khởi động ovsdb-server
+        echo "[OVS-Pod] Bật ovsdb-server..."
+        /usr/sbin/ovsdb-server --remote=punix:/var/run/openvswitch/db.sock \
+                               --remote=db:Open_vSwitch,Open_vSwitch,manager_options \
+                               --pidfile=/var/run/openvswitch/ovsdb-server.pid --detach
+
+        # 3. Khởi tạo và kích hoạt chế độ DPDK trong OVS
+        /usr/bin/ovs-vsctl --no-wait init
+        /usr/bin/ovs-vsctl --no-wait set Open_vSwitch . other_config:dpdk-init=true
+
+        # 4. Khởi động ovs-vswitchd
+        echo "[OVS-Pod] Bật ovs-vswitchd daemon..."
+        /usr/sbin/ovs-vswitchd unix:/var/run/openvswitch/db.sock \
+                               --pidfile=/var/run/openvswitch/ovs-vswitchd.pid --detach
+
+        sleep 2
+
+        # 5. Chạy script cấu hình bridge & 2 vhost-user port
+        echo "[OVS-Pod] Cấu hình bridge và OpenFlow rules từ manifests/ovs-setup.sh..."
+        bash /manifests/ovs-setup.sh
+
+        echo "[OVS-Pod] OVS-DPDK đã sẵn sàng và đang hoạt động!"
+        echo "====================================================="
+
+        # Giữ container chạy ngầm và hiển thị log
+        tail -f /var/log/openvswitch/ovs-vswitchd.log
+
+    volumeMounts:
+    # 1. Mount toàn bộ binary và thư viện OVS từ Host (Zero-overhead, không tốn ổ cứng)
+    - name: host-usr
+      mountPath: /usr
+      readOnly: true
+    - name: host-lib
+      mountPath: /lib
+      readOnly: true
+    - name: host-lib64
+      mountPath: /lib64
+      readOnly: true
+    # 2. Mount HugePages để OVS-DPDK cấp phát bộ nhớ
+    - name: hugepages
+      mountPath: /dev/hugepages
+    # 3. Mount thư mục Unix socket để chia sẻ vhost-user với Pod 0 và Pod 1
+    - name: ovs-sockets
+      mountPath: /var/run/openvswitch
+    # 4. Mount thư mục cấu hình và log OVS
+    - name: ovs-etc
+      mountPath: /etc/openvswitch
+    - name: ovs-logs
+      mountPath: /var/log/openvswitch
+    # 5. Mount thư mục chứa script cấu hình
+    - name: project-manifests
+      mountPath: /manifests
+      readOnly: true
+
+  volumes:
+  - name: host-usr
+    hostPath:
+      path: /usr
+  - name: host-lib
+    hostPath:
+      path: /lib
+  - name: host-lib64
+    hostPath:
+      path: /lib64
+  - name: hugepages
+    hostPath:
+      path: /dev/hugepages
+  - name: ovs-sockets
+    hostPath:
+      path: /var/run/openvswitch
+  - name: ovs-etc
+    hostPath:
+      path: /etc/openvswitch
+  - name: ovs-logs
+    hostPath:
+      path: /var/log/openvswitch
+  - name: project-manifests
+    hostPath:
+      path: /mnt/70E63C66E63C2EAA/Users/ADMIN/Desktop/coding/K8s-DPDK-L3-Bridge/manifests
