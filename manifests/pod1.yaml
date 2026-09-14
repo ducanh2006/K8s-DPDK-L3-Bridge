@@ -9,23 +9,28 @@ spec:
   restartPolicy: Never
   containers:
   - name: pod1-responder
-    image: pod1:latest
-    imagePullPolicy: IfNotPresent
+    image: docker.io/library/pod1:latest
+    imagePullPolicy: Never
     securityContext:
       privileged: true
     command: ["/app/pod1_app"]
     args:
-      - "-l", "3-4"
-      - "--no-pci"
+      - "-l"
+      - "3-4"
+      - "--file-prefix=pod1"
+      - "--single-file-segments"
       - "--vdev=virtio_user0,path=/var/run/openvswitch/vhost-user-1,server=1"
       - "--"
-      - "--config", "/app/routes.conf"
+      - "--config"
+      - "/app/routes.conf"
     resources:
       requests:
         memory: "512Mi"
+        hugepages-2Mi: "256Mi"
         cpu: "1"
       limits:
         memory: "1Gi"
+        hugepages-2Mi: "256Mi"
         cpu: "2"
     volumeMounts:
     - name: hugepages

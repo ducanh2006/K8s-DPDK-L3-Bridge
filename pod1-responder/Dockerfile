@@ -16,6 +16,8 @@ COPY build/dpdk-libs/ /app/dpdk-libs/
 COPY pod1-responder/pod1_app /app/pod1_app
 COPY pod1-responder/routes.conf /app/routes.conf
 
+RUN chmod -R 755 /app
+
 ENV LD_LIBRARY_PATH=/app/dpdk-libs
 
 ENTRYPOINT ["/app/pod1_app"]

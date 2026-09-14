@@ -14,6 +14,13 @@ spec:
     imagePullPolicy: IfNotPresent
     securityContext:
       privileged: true
+    resources:
+      requests:
+        memory: "1Gi"
+        hugepages-2Mi: "512Mi"
+      limits:
+        memory: "2Gi"
+        hugepages-2Mi: "512Mi"
     command: ["/bin/bash", "-c"]
     args:
       - |
@@ -22,7 +29,7 @@ spec:
         echo "   KHỞI ĐỘNG OVS-DPDK TRONG KUBERNETES POD          "
         echo "====================================================="
         
-        mkdir -p /var/run/openvswitch /etc/openvswitch /var/log/openvswitch
+        mkdir -p /var/run/openvswitch /etc/openvswitch /var/log/openvswitch /var/lib/openvswitch
         
         # 1. Khởi tạo database Open vSwitch nếu chưa tồn tại
         if [ ! -f /etc/openvswitch/conf.db ]; then
@@ -39,11 +46,17 @@ spec:
         # 3. Khởi tạo và kích hoạt chế độ DPDK trong OVS
         /usr/bin/ovs-vsctl --no-wait init
         /usr/bin/ovs-vsctl --no-wait set Open_vSwitch . other_config:dpdk-init=true
+        /usr/bin/ovs-vsctl --no-wait set Open_vSwitch . other_config:dpdk-socket-mem="256"
+        /usr/bin/ovs-vsctl --no-wait set Open_vSwitch . other_config:dpdk-extra="--in-memory"
 
-        # 4. Khởi động ovs-vswitchd
+        # 4. Khởi động ovs-vswitchd (bản DPDK)
         echo "[OVS-Pod] Bật ovs-vswitchd daemon..."
-        /usr/sbin/ovs-vswitchd unix:/var/run/openvswitch/db.sock \
-                               --pidfile=/var/run/openvswitch/ovs-vswitchd.pid --detach
+        OVS_DAEMON="/usr/lib/openvswitch-switch-dpdk/ovs-vswitchd-dpdk"
+        if [ ! -f "$OVS_DAEMON" ]; then
+            OVS_DAEMON="/usr/sbin/ovs-vswitchd"
+        fi
+        $OVS_DAEMON unix:/var/run/openvswitch/db.sock \
+                    --pidfile=/var/run/openvswitch/ovs-vswitchd.pid --detach
 
         sleep 2
 
@@ -77,6 +90,8 @@ spec:
     # 4. Mount thư mục cấu hình và log OVS
     - name: ovs-etc
       mountPath: /etc/openvswitch
+    - name: ovs-lib
+      mountPath: /var/lib/openvswitch
     - name: ovs-logs
       mountPath: /var/log/openvswitch
     # 5. Mount thư mục chứa script cấu hình
@@ -103,6 +118,9 @@ spec:
   - name: ovs-etc
     hostPath:
       path: /etc/openvswitch
+  - name: ovs-lib
+    hostPath:
+      path: /var/lib/openvswitch
   - name: ovs-logs
     hostPath:
       path: /var/log/openvswitch

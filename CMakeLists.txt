@@ -35,9 +35,15 @@ set(CMAKE_INSTALL_RPATH
     "/app/dpdk-libs"
 )
 
-# Linker flags cho driver virtio-user, net_pcap và các thư viện hệ thống
-set(DRIVER_LDFLAGS "-L${CMAKE_SOURCE_DIR}/third_party/dpdk-24.11/build/drivers -Wl,--whole-archive -lrte_net_virtio -lrte_net_pcap -Wl,--no-whole-archive")
-set(EXTRA_LIBS pthread numa dl m pcap)
+# Linker flags nhúng tĩnh các driver PMD và mempool ring vào binary
+set(DRIVER_LDFLAGS
+    "-Wl,--whole-archive"
+    "${CMAKE_SOURCE_DIR}/third_party/dpdk-24.11/build/drivers/librte_net_pcap.a"
+    "${CMAKE_SOURCE_DIR}/third_party/dpdk-24.11/build/drivers/librte_net_virtio.a"
+    "${CMAKE_SOURCE_DIR}/third_party/dpdk-24.11/build/drivers/librte_mempool_ring.a"
+    "-Wl,--no-whole-archive"
+)
+set(EXTRA_LIBS rte_net rte_ethdev rte_kvargs rte_bus_vdev rte_bus_pci pthread numa dl m pcap)
 
 # 4. Thư viện dùng chung common
 add_library(common STATIC
