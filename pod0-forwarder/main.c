@@ -1,18 +1,12 @@
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <signal.h>
 #include <unistd.h>
-#include <getopt.h>
 #include <inttypes.h>
 
 #include "dpdk_init.h"
 #include "pkt_utils.h"
-#include "flow_tracker.h"
-
-#ifdef LEGACY_L3_FILTER
-#include "l3_table.h"
-#endif
+#include "hw_stats.h"
+#include "group_stats.h"
 
 #define BURST_SIZE 64
 
@@ -24,41 +18,6 @@ static void signal_handler(int signum)
         printf("\n[Pod0] Signal %d received, shutting down gracefully...\n", signum);
         force_quit = true;
     }
-}
-
-struct app_config {
-    char config_path[256];
-};
-
-static void print_usage(const char *prgname)
-{
-    printf("Usage: %s [EAL options] -- [APP options]\n"
-           "APP Options:\n"
-           "  --config <path>    (Optional) Path to legacy routes.conf\n",
-           prgname);
-}
-
-static int parse_app_args(int argc, char **argv, struct app_config *cfg)
-{
-    snprintf(cfg->config_path, sizeof(cfg->config_path), "/app/routes.conf");
-
-    static struct option lgopts[] = {
-        {"config", required_argument, NULL, 'c'},
-        {NULL, 0, NULL, 0}
-    };
-
-    int opt, opt_idx;
-    while ((opt = getopt_long(argc, argv, "c:", lgopts, &opt_idx)) != EOF) {
-        switch (opt) {
-        case 'c':
-            snprintf(cfg->config_path, sizeof(cfg->config_path), "%s", optarg);
-            break;
-        default:
-            print_usage(argv[0]);
-            return -1;
-        }
-    }
-    return 0;
 }
 
 int main(int argc, char **argv)
@@ -76,8 +35,7 @@ int main(int argc, char **argv)
 
     /* 1. Khởi tạo DPDK EAL và toàn bộ cổng mạng */
     uint16_t nb_ports = 0;
-    int eal_consumed = 0;
-    if (!init_dpdk_subsystem(argc, argv, &nb_ports, &eal_consumed)) {
+    if (!init_dpdk_subsystem(argc, argv, &nb_ports, NULL)) {
         return 1;
     }
 
@@ -90,29 +48,11 @@ int main(int argc, char **argv)
 
     printf("[Pod0] Port Mapping: Port %u (PCAP Ingress) -> Port %u (OVS Virtio Egress)\n",
            pcap_port, virtio_port);
-
-    /* 2. Đọc các tham số ứng dụng sau dấu '--' */
-    int app_argc = argc - eal_consumed;
-    char **app_argv = argv + eal_consumed;
-    struct app_config cfg;
-    if (parse_app_args(app_argc, app_argv, &cfg) < 0) {
-        cleanup_dpdk_subsystem(nb_ports);
-        return 1;
-    }
-
-#ifdef LEGACY_L3_FILTER
-    printf("[Pod0] Note: Running with LEGACY_L3_FILTER enabled (App-level routing)\n");
-    struct l3_table *table = l3_table_init("POD0_L3_TABLE", rte_socket_id());
-    if (table) {
-        l3_table_load_file(table, cfg.config_path);
-    }
-#else
     printf("[Pod0] Note: Transparent passthrough active. L3 Flow Table is offloaded to OVS-DPDK.\n");
-#endif
 
-    /* 3. Khởi tạo Flow Tracker theo dõi 5-tuple IP/Port */
-    struct flow_tracker ft;
-    flow_tracker_init(&ft, "[Pod0-TX]");
+    /* 2. Khởi tạo Group Stats Tracker theo dõi 8 groups */
+    struct group_stats_tracker gs;
+    group_stats_init(&gs, "[Pod0-GRP]");
 
     printf("[Pod0] Starting high-speed packet forwarding loop...\n");
     printf("-----------------------------------------------------\n");
@@ -134,7 +74,7 @@ int main(int argc, char **argv)
 
     struct rte_mbuf *pkts[BURST_SIZE];
 
-    /* 4. Vòng lặp chuyển tiếp gói tin chính */
+    /* 3. Vòng lặp chuyển tiếp gói tin chính */
     while (!force_quit) {
         uint16_t nb_rx = rte_eth_rx_burst(pcap_port, 0, pkts, BURST_SIZE);
 
@@ -142,11 +82,11 @@ int main(int argc, char **argv)
             period_rx_pkts += nb_rx;
             total_rx_pkts += nb_rx;
 
-            /* Phân tích và ghi nhận từng gói tin vào Flow Tracker (Zero-Copy) */
+            /* Phân tích và ghi nhận từng gói tin vào Group Stats Tracker (Zero-Copy) */
             for (uint16_t i = 0; i < nb_rx; i++) {
                 period_rx_bytes += pkts[i]->pkt_len;
                 total_rx_bytes += pkts[i]->pkt_len;
-                flow_tracker_record(&ft, pkts[i]);
+                group_stats_record(&gs, pkts[i]);
             }
 
             /* Chế độ PASSTHROUGH: Đẩy toàn bộ sang OVS-DPDK qua virtio-user */
@@ -191,29 +131,26 @@ int main(int argc, char **argv)
             last_1s_time = now;
         }
 
-        /* Chu kỳ 20 giây: In Top-5 Active Flows (IP:Port & Mbps) */
+        /* Chu kỳ 20 giây: In bảng thống kê 8 Groups (SSOT) */
         if (now - last_20s_time >= 20000000000ULL) {
-            flow_tracker_print_top(&ft, 5, "[Pod0-TX]");
-            flow_tracker_reset_period(&ft);
+            double elapsed = (double)(now - last_20s_time) / 1e9;
+            group_stats_print_table(&gs, "[Pod0-GRP]", elapsed);
+            group_stats_reset_period(&gs);
             last_20s_time = now;
         }
     }
 
-    /* 5. Tổng kết toàn diện khi kết thúc */
+    /* 4. Tổng kết toàn diện khi kết thúc */
     printf("\n=====================================================\n");
     printf("             Pod 0 Final Statistics Summary          \n");
     printf("=====================================================\n");
     printf("Total PCAP Read  : %" PRIu64 " pkts (%.2f MB)\n", total_rx_pkts, (double)total_rx_bytes / (1024.0 * 1024.0));
     printf("Total TX to OVS  : %" PRIu64 " pkts (%.2f MB)\n", total_tx_pkts, (double)total_tx_bytes / (1024.0 * 1024.0));
     printf("TX Ring Dropped  : %" PRIu64 " pkts\n", total_tx_dropped);
-    printf("Active Flow Keys : %u unique 5-tuples\n", ft.active_flows);
+    printf("Non-IPv4 Packets : %" PRIu64 "\n", gs.non_ip_pkts);
     printf("=====================================================\n");
 
-    flow_tracker_print_top(&ft, 10, "[Pod0-TX-FINAL]");
-
-#ifdef LEGACY_L3_FILTER
-    if (table) l3_table_free(table);
-#endif
+    group_stats_print_table(&gs, "[Pod0-GRP-FINAL]", 0.0);
 
     cleanup_dpdk_subsystem(nb_ports);
     return 0;

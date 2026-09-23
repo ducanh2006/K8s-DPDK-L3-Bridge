@@ -14,7 +14,6 @@ WORKDIR /app
 # Copy thư viện DPDK và binary ứng dụng Pod 0
 COPY build/dpdk-libs/ /app/dpdk-libs/
 COPY pod0-forwarder/pod0_app /app/pod0_app
-COPY pod0-forwarder/routes.conf /app/routes.conf
 
 RUN chmod -R 755 /app
 

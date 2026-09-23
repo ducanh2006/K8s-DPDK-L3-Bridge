@@ -30,9 +30,10 @@ struct l3_table *l3_table_init(const char *name, uint32_t socket_id);
 int l3_table_add_route(struct l3_table *table, const char *ip_cidr, l3_action_t action);
 
 /**
- * Nạp danh sách luật từ file cấu hình routes.conf
+ * (Legacy) Nạp danh sách luật từ file cấu hình routes.conf
+ * @note Hệ thống chính thức hiện dùng manifests/ovs_flows.conf và group_stats
  * @param table Con trỏ bảng L3
- * @param conf_path Đường dẫn tới file routes.conf
+ * @param conf_path Đường dẫn tới file cấu hình
  * @return Số lượng luật đã nạp thành công, hoặc < 0 nếu file không hợp lệ
  */
 int l3_table_load_file(struct l3_table *table, const char *conf_path);

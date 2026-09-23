@@ -21,9 +21,6 @@ spec:
       - "--single-file-segments"
       - "--vdev=net_pcap0,rx_pcap=/data/balanced_traffic_sample.pcap,infinite_rx=1"
       - "--vdev=virtio_user0,path=/var/run/openvswitch/vhost-user-0,server=1"
-      - "--"
-      - "--config"
-      - "/app/routes.conf"
     resources:
       requests:
         memory: "512Mi"

@@ -20,9 +20,6 @@ spec:
       - "--file-prefix=pod1"
       - "--single-file-segments"
       - "--vdev=virtio_user0,path=/var/run/openvswitch/vhost-user-1,server=1"
-      - "--"
-      - "--config"
-      - "/app/routes.conf"
     resources:
       requests:
         memory: "512Mi"
