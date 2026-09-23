@@ -23,18 +23,21 @@ if systemctl is-active --quiet openvswitch-switch 2>/dev/null; then
     sudo systemctl stop openvswitch-switch || true
 fi
 
-echo -e "\n\033[1;34m[2/4] Triển khai dpdk-pod1 (Traffic Sink) trước...\033[0m"
+echo -e "\n\033[1;34m[2/4] Triển khai ovs-dpdk (Switch ảo OVS trong Pod) TRƯỚC để giữ handshake vhost-user...\033[0m"
+kubectl apply -f manifests/ovs-pod.yaml
+
+echo -e "\033[1;33mĐợi ovs-dpdk Ready (tối đa 120s)...\033[0m"
+kubectl wait --for=condition=Ready pod/ovs-dpdk --timeout=120s
+
+sleep 2
+
+echo -e "\n\033[1;34m[3/4] Triển khai dpdk-pod1 (Traffic Sink)...\033[0m"
 kubectl apply -f manifests/pod1.yaml
 
 sleep 2
 
-echo -e "\n\033[1;34m[3/4] Triển khai dpdk-pod0 (PCAP Replayer & L3 Router)...\033[0m"
+echo -e "\n\033[1;34m[4/4] Triển khai dpdk-pod0 (PCAP Streamer, passthrough sang OVS)...\033[0m"
 kubectl apply -f manifests/pod0.yaml
-
-sleep 2
-
-echo -e "\n\033[1;34m[4/4] Triển khai ovs-dpdk (Switch ảo OVS trong Pod)...\033[0m"
-kubectl apply -f manifests/ovs-pod.yaml
 
 echo -e "\n\033[1;33mĐang kiểm tra trạng thái toàn bộ Pods:\033[0m"
 kubectl get pods -l app=dpdk-l3-bridge -o wide
