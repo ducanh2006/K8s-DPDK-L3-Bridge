@@ -36,15 +36,40 @@ ovs-vsctl --may-exist add-port $BRIDGE $PORT0 -- \
 ovs-vsctl --may-exist add-port $BRIDGE $PORT1 -- \
     set Interface $PORT1 type=dpdkvhostuserclient options:vhost-server-path="$SOCK_DIR/$PORT1"
 
-# 3. Cấu hình OpenFlow rules chuyển tiếp hai chiều giữa Port 0 và Port 1
-echo "[3/3] Nạp OpenFlow rules chuyển tiếp gói tin hai chiều..."
+# 3. Cấu hình bảng luật định tuyến L3 trên OVS-DPDK (Theo manifests/ovs_flows.conf)
+echo "[3/3] Nạp OpenFlow L3 Routing Table vào switch ảo $BRIDGE..."
 ovs-ofctl del-flows $BRIDGE
-ovs-ofctl add-flow $BRIDGE "in_port=$PORT0, actions=output:$PORT1"
-ovs-ofctl add-flow $BRIDGE "in_port=$PORT1, actions=output:$PORT0"
+
+# DROP — priority cao nhất (200), áp dụng cho lưu lượng đi từ Pod 0
+echo "  -> [Priority 200] Nạp luật DROP cho Meta (157.240.0.0/16) và AWS (96.127.0.0/16)..."
+ovs-ofctl add-flow $BRIDGE "priority=200,ip,in_port=$PORT0,nw_dst=157.240.0.0/16,actions=drop"
+ovs-ofctl add-flow $BRIDGE "priority=200,ip,in_port=$PORT0,nw_dst=96.127.0.0/16,actions=drop"
+
+# FORWARD Google (Priority 100)
+echo "  -> [Priority 100] Nạp luật FORWARD cho Google (172.217.0.0/16, 142.250.0.0/16)..."
+ovs-ofctl add-flow $BRIDGE "priority=100,ip,in_port=$PORT0,nw_dst=172.217.0.0/16,actions=output:$PORT1"
+ovs-ofctl add-flow $BRIDGE "priority=100,ip,in_port=$PORT0,nw_dst=142.250.0.0/16,actions=output:$PORT1"
+
+# Default L3 + chiều về + cách ly ARP (để không nhiễu số liệu đếm gói L3)
+echo "  -> [Priority 50/10/1] Nạp luật Default Forward, Reverse Path và ARP Drop..."
+ovs-ofctl add-flow $BRIDGE "priority=50,ip,in_port=$PORT0,actions=output:$PORT1"
+ovs-ofctl add-flow $BRIDGE "priority=10,in_port=$PORT1,actions=output:$PORT0"
+ovs-ofctl add-flow $BRIDGE "priority=1,arp,actions=drop"
 
 echo -e "\n====================================================="
-echo -e "\033[1;32mTrạng thái Switch ảo OVS-DPDK:\033[0m"
+echo -e "\033[1;32m[1] Cấu hình Switch ảo OVS-DPDK (ovs-vsctl show):\033[0m"
 ovs-vsctl show
-echo -e "====================================================="
-ovs-ofctl dump-flows $BRIDGE
+
+echo -e "\n====================================================="
+echo -e "\033[1;32m[2] BẢNG ROUTE CỦA VSWITCH (OpenFlow 1.3 dump-flows):\033[0m"
+ovs-ofctl -O OpenFlow13 dump-flows $BRIDGE
+
+echo -e "\n====================================================="
+echo -e "\033[1;32m[3] Thống kê cổng mạng vSwitch (dump-ports):\033[0m"
+ovs-ofctl dump-ports $BRIDGE
+
+echo -e "\n====================================================="
+echo -e "\033[1;32m[4] Fast-Path Datapath Kernel/Netdev (dpctl show & flows):\033[0m"
+ovs-appctl dpctl/show || true
+ovs-appctl dpctl/dump-flows | head -20 || true
 echo -e "=====================================================\n"
