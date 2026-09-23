@@ -25,10 +25,13 @@ int main(int argc, char **argv)
     struct l3_table *table = l3_table_init("TEST_L3", rte_socket_id());
     assert(table != NULL);
 
-    /* 1. Nạp file cấu hình pod0-forwarder/routes.conf */
-    int loaded = l3_table_load_file(table, "pod0-forwarder/routes.conf");
-    printf("Loaded %d rules from pod0-forwarder/routes.conf\n", loaded);
-    assert(loaded >= 2);
+    /* 1. Nạp các luật test trực tiếp vào bảng LPM */
+    assert(l3_table_add_route(table, "172.217.0.0/16", L3_ACTION_FORWARD) == 0);
+    assert(l3_table_add_route(table, "142.250.0.0/16", L3_ACTION_FORWARD) == 0);
+    assert(l3_table_add_route(table, "157.240.0.0/16", L3_ACTION_DROP) == 0);
+    assert(l3_table_add_route(table, "96.127.0.0/16", L3_ACTION_DROP) == 0);
+    assert(l3_table_add_route(table, "0.0.0.0/0", L3_ACTION_FORWARD) == 0);
+    printf("Successfully added 5 test rules to LPM table\n");
 
     /* 2. Test IP Google (172.217.182.112) -> Phải FORWARD */
     struct in_addr ip1;
