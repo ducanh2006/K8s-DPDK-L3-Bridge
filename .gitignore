@@ -7,6 +7,4 @@ data/*
 *_app
 *.a
 *.o
-# File sinh tự động lúc build từ manifests/ovs_flows.conf (không commit)
-common/group_stats_table.h
 compile_commands.json

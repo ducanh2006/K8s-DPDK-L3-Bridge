@@ -23,6 +23,9 @@ if systemctl is-active --quiet openvswitch-switch 2>/dev/null; then
     sudo systemctl stop openvswitch-switch || true
 fi
 
+echo -e "\n\033[1;34m[1.5/4] Nạp Kubernetes ConfigMap ovs-flows (Bảng luật L3/L4 SSOT)...\033[0m"
+kubectl apply -f manifests/ovs-flows-configmap.yaml
+
 echo -e "\n\033[1;34m[2/4] Triển khai ovs-dpdk (Switch ảo OVS trong Pod) TRƯỚC để giữ handshake vhost-user...\033[0m"
 kubectl apply -f manifests/ovs-pod.yaml
 

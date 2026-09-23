@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ovs-flows
+  labels:
+    app: dpdk-l3-bridge
+data:
+  ovs_flows.conf: |
+    [GROUPS_SECTION]# Syntax: [Group_Name],[Priority],[Action]
+    fg_l34_facebook,8,DROP
+    fg_l34_aws,7,DROP
+    fg_l34_youtube,6,FORWARD
+    fg_l34_http_sdf1003,5,FORWARD
+    fg_l34_https_sdf1004,4,FORWARD
+    fg_l34_dns_sdf1005,3,FORWARD
+    fg_l34_udp_sdf1006,2,DROP
+    fg_l34_default,1,FORWARD
+
+    [FILTERS_SECTION]
+    # Syntax: [Filter_Name],[Group],[Proto],[SrcIP/Mask],[DstIP/Mask],[SrcPort],[DstPort]
+    f_l34_facebook_1,fg_l34_facebook,*,*,31.13.64.0/18,*,*
+    f_l34_facebook_2,fg_l34_facebook,*,*,66.220.144.0/20,*,*
+    f_l34_facebook_3,fg_l34_facebook,*,*,69.63.176.0/20,*,*
+    f_l34_facebook_4,fg_l34_facebook,*,*,157.240.0.0/16,*,*
+    f_l34_facebook_5,fg_l34_facebook,*,*,69.220.144.5/32,*,*
+    f_l34_aws_test,fg_l34_aws,*,*,96.127.0.0/16,*,*
+    f_l34_youtube_1,fg_l34_youtube,tcp,*,142.250.0.0/15,*,443
+    f_l34_youtube_2,fg_l34_youtube,tcp,*,172.217.0.0/16,*,443
+    f_l34_youtube_3,fg_l34_youtube,tcp,*,216.58.192.0/19,*,443
+    f_l34_youtube_4,fg_l34_youtube,tcp,*,74.125.0.1/32,*,443
+    f_l34_http_all,fg_l34_http_sdf1003,tcp,*,*,*,80
+    f_l34_https_all,fg_l34_https_sdf1004,tcp,*,*,*,443
+    f_l34_dns_udp,fg_l34_dns_sdf1005,udp,*,*,*,53
+    f_l34_dns_tcp,fg_l34_dns_sdf1005,tcp,*,*,*,53
+    f_l34_udp_other,fg_l34_udp_sdf1006,udp,*,*,*,*
+    f_l34_default_all,fg_l34_default,*,*,*,*,*

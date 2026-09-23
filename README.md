@@ -32,32 +32,29 @@ Dự án này được thiết kế nhằm xây dựng, thử nghiệm và đán
 |            Pod 0: dpdk-pod0              |        |             Pod 1: dpdk-pod1             |
 |       (PCAP Streamer & Passthrough)      |        |       (High-Speed Traffic Sink)          |
 |                                          |        |                                          |
-|  [File PCAP: balanced_traffic_sample.pcap] |      |                                          |
+| [File PCAP: balanced_traffic_sample.pcap]|        |                                          |
 |                 │                        |        |                                          |
 |       DPDK Port 0 (net_pcap)             |        |                                          |
 |                 ▼                        |        |                                          |
 |  +------------------------------------+  |        |  +------------------------------------+  |
 |  |  Group Stats (8 groups SSOT):      |  |        |  |  Group Stats (8 groups SSOT):      |  |
-|  |  3 DROP (fb/aws/udp) | 5 FORWARD   |  |        |  |  chỉ còn 5 nhóm FORWARD          |  |
+|  |  3 DROP (fb/aws/udp) | 5 FORWARD   |  |        |  |  chỉ còn 5 nhóm FORWARD            |  |
 |  +------------------------------------+  |        |  +------------------------------------+  |
-|  | TX toàn bộ sang Port 1 (Virtio)    |  |        |  | main.c (pps/Mbps + groups + HW)  |  |
+|  | TX toàn bộ sang Port 1 (Virtio)    |  |        |  | main.c (pps/Mbps + groups + HW)    |  |
 |  +------------------------------------+  |        |  +------------------------------------+  |
-|  |     common/ (dpdk_init, group_stats)|  |        |  |     common/ (dpdk_init, group_stats)|  |
+|  |    common/ (dpdk_init, group_stats)|  |        |  |    common/ (dpdk_init, group_stats)|  |
 |  +------------------------------------+  |        |  +------------------------------------+  |
-|                 │                        |        |                    ▲                     |
-|       DPDK Port 1 (virtio-user0)         |        |         DPDK Port 0 (virtio-user0)       |
-+----------------─┼────────────────────────+        +────────────────────┼─────────────────────+
-                  │                                                      │
-            (Unix Socket)                                          (Unix Socket)
-  /var/run/openvswitch/vhost-user-0                      /var/run/openvswitch/vhost-user-1
-                  │                                                      │
-+─────────────────┼──────────────────────────────────────────────────────┼─────────────────────+
-| Pod: ovs-dpdk (Switch ảo OVS-DPDK chạy trong Pod - Zero-copy Shared Memory)                  |
-|                                     Bridge: br-dpdk                                          |
-|              Bảng route L3/L4 từ manifests/ovs_flows.conf (SSOT, 8 groups)                   |
-|    [Port: vhost-user-0]  <==== OpenFlow L3/L4 Routing (DROP fb/aws/udp, FWD còn lại) ===>  [Port: vhost-user-1]     |
-|    (dpdkvhostuserclient)                                             (dpdkvhostuserclient)   |
-+----------------------------------------------------------------------------------------------+
++------------------------------------------+        +------------------------------------------+
+                 │                                                      ▲                     
+       DPDK Port 1 (virtio-user0)                         DPDK Port 0 (virtio-user0)       
++----------------▼------------------------------------------------------│----------------------------------------+
+|                                                                                                                |
+| Pod: ovs-dpdk (Switch ảo OVS-DPDK chạy trong Pod - Zero-copy Shared Memory)                                    |
+|                                     Bridge: br-dpdk                                                            |
+|              Bảng route L3/L4 từ manifests/ovs_flows.conf (SSOT, 8 groups)                                     |
+|    [Port: vhost-user-0]  <==== OpenFlow L3/L4 Routing (DROP fb/aws/udp, FWD còn lại) ===>  [Port: vhost-user-1]|
+|    (dpdkvhostuserclient)                                             (dpdkvhostuserclient)                     |
++----------------------------------------------------------------------------------------------------------------+
 ```
 
 ---
@@ -97,8 +94,8 @@ K8s-DPDK-L3-Bridge/
 ├── build/compile_commands.json       # (Sinh tự động) cấu hình Language Server cho VSCode / IDE
 ├── common/                         # THƯ MỤC DÙNG CHUNG (Hạ tầng DPDK & Bảng luật SSOT)
 │   ├── dpdk_init.c / .h            # Khởi tạo EAL, mempool, cấu hình port virtio-user & queues
+│   ├── flow_table.c / .h           # Module nạp & phân tích bảng luật lúc startup (Runtime Parser)
 │   ├── group_stats.c / .h          # Module phân loại và thống kê theo 8 Groups SSOT
-│   ├── group_stats_table.h         # Bảng luật C sinh tự động từ manifests/ovs_flows.conf
 │   ├── l3_table.c / .h             # Giải thuật tra cứu LPM legacy
 │   ├── hw_stats.c / .h             # In thống kê phần cứng cổng mạng (imissed/oerrors)
 │   └── pkt_utils.h                 # Đồng hồ monotonic get_current_time_ns cho thống kê chu kỳ
@@ -115,21 +112,22 @@ K8s-DPDK-L3-Bridge/
 │   └── Dockerfile                  # Đóng gói image pod1:latest
 ├── manifests/                      # KUBERNETES MANIFESTS & CẤU HÌNH OVS
 │   ├── ovs_flows.conf              # Single Source of Truth (SSOT) cho 8 Groups và 16 Filter Rules
+│   ├── ovs-flows-configmap.yaml    # Kubernetes ConfigMap chứa luật L3/L4 SSOT nạp động vào Pods
 │   ├── ovs-pod.yaml                # Manifest Pod OVS-DPDK chạy vSwitch ảo trong K8s
 │   ├── ovs-setup.sh                # Script tạo switch br-dpdk và nạp flows tự động từ ovs_flows.conf
-│   ├── pod0.yaml                   # Manifest triển khai Pod 0 (mount PCAP data, hugepages, ovs socket)
-│   └── pod1.yaml                   # Manifest triển khai Pod 1 (mount hugepages, ovs socket)
+│   ├── pod0.yaml                   # Manifest triển khai Pod 0 (mount PCAP data, ConfigMap, hugepages, ovs socket)
+│   └── pod1.yaml                   # Manifest triển khai Pod 1 (mount ConfigMap, hugepages, ovs socket)
 ├── scripts/                        # BỘ SCRIPTS TỰ ĐỘNG HÓA TỪ A-Z
 │   ├── 00_setup_app_env.sh         # Khởi tạo /home/app, cài K3s, Docker data-root, cấp Hugepages
 │   ├── 01_setup_host.sh            # (Legacy) Cài OVS trên Host — KHÔNG dùng nữa, OVS chạy trong Pod
-│   ├── gen_group_table.sh          # Sinh mã C group_stats_table.h từ manifests/ovs_flows.conf
-│   ├── 03_build_all.sh             # Sinh mã C và biên dịch toàn bộ bằng CMake
+│   ├── 03_build_all.sh             # Biên dịch toàn bộ bằng CMake
 │   ├── 04_build_docker.sh          # Build 2 Docker images và nạp vào K3s image store
-│   ├── 05_deploy_k8s.sh            # Triển khai toàn bộ cụm K8s (ovs-dpdk, pod0, pod1)
+│   ├── 05_deploy_k8s.sh            # Triển khai toàn bộ cụm K8s (ConfigMap, ovs-dpdk, pod0, pod1)
 │   ├── 06_verify_traffic.sh        # Kiểm tra thống kê pps, throughput và bảng 8 Groups đối chứng E2E
 │   └── 07_stop_k8s.sh              # Dừng toàn bộ Pods và dọn socket vhost-user tồn đọng
 ├── tests/                          # UNIT TEST TỰ ĐỘNG
-│   └── test_l3_table.c             # Kiểm thử offline bảng luật L3 (chạy không cần quyền root)
+│   ├── test_l3_table.c             # Kiểm thử offline bảng luật L3 (chạy không cần quyền root)
+│   └── test_flow_table.c           # Kiểm thử offline bộ Runtime Parser & đối sánh luật (không cần root)
 └── third_party/
     └── dpdk-24.11/                 # Thư viện DPDK 24.11 đã biên dịch sẵn trong workspace
 ```

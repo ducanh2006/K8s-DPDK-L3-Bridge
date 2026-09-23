@@ -50,6 +50,7 @@ add_library(common STATIC
     common/dpdk_init.c
     common/l3_table.c
     common/hw_stats.c
+    common/flow_table.c
     common/group_stats.c
 )
 target_include_directories(common PUBLIC ${CMAKE_SOURCE_DIR}/common ${DPDK_INCLUDE_DIRS})
@@ -68,3 +69,7 @@ target_link_libraries(pod1_app PRIVATE common ${DPDK_LIBRARIES} ${DRIVER_LDFLAGS
 # 7. Chương trình Unit Test offline
 add_executable(test_l3_table tests/test_l3_table.c)
 target_link_libraries(test_l3_table PRIVATE common ${DPDK_LIBRARIES} ${DRIVER_LDFLAGS} ${EXTRA_LIBS})
+
+# 8. Chương trình Unit Test offline cho Flow Table Parser
+add_executable(test_flow_table tests/test_flow_table.c)
+target_link_libraries(test_flow_table PRIVATE common ${DPDK_LIBRARIES} ${DRIVER_LDFLAGS} ${EXTRA_LIBS})

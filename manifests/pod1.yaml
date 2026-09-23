@@ -20,6 +20,7 @@ spec:
       - "--file-prefix=pod1"
       - "--single-file-segments"
       - "--vdev=virtio_user0,path=/var/run/openvswitch/vhost-user-1,server=1"
+      - "--rules-file=/app/ovs_flows.conf"
     resources:
       requests:
         memory: "512Mi"
@@ -34,6 +35,10 @@ spec:
       mountPath: /dev/hugepages
     - name: ovs-sockets
       mountPath: /var/run/openvswitch
+    - name: config-volume
+      mountPath: /app/ovs_flows.conf
+      subPath: ovs_flows.conf
+      readOnly: true
   volumes:
   - name: hugepages
     hostPath:
@@ -41,3 +46,6 @@ spec:
   - name: ovs-sockets
     hostPath:
       path: /var/run/openvswitch
+  - name: config-volume
+    configMap:
+      name: ovs-flows

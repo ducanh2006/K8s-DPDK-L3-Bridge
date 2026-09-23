@@ -1,4 +1,6 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <signal.h>
 #include <unistd.h>
 #include <inttypes.h>
@@ -6,6 +8,7 @@
 #include "dpdk_init.h"
 #include "pkt_utils.h"
 #include "hw_stats.h"
+#include "flow_table.h"
 #include "group_stats.h"
 
 #define BURST_SIZE 64
@@ -36,19 +39,54 @@ int main(int argc, char **argv)
     printf("  MODE: RECEIVE_FROM_OVS (Verifying routed flows)     \n");
     printf("=====================================================\n");
 
-    /* 1. Khởi tạo DPDK EAL và cổng mạng virtio-user */
-    uint16_t nb_ports = 0;
-    if (!init_dpdk_subsystem(argc, argv, &nb_ports, NULL)) {
+    /* 0. Bóc tách tham số custom --rules-file trước khi chuyển argc/argv cho DPDK EAL */
+    const char *rules_file = "/app/ovs_flows.conf";
+    char **eal_argv = (char **)malloc((argc + 1) * sizeof(char *));
+    if (!eal_argv) {
+        fprintf(stderr, "[Pod1] Lỗi: Không thể cấp phát bộ nhớ cho eal_argv\n");
         return 1;
     }
+    int eal_argc = 0;
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--rules-file") == 0 && i + 1 < argc) {
+            rules_file = argv[++i];
+        } else if (strncmp(argv[i], "--rules-file=", 13) == 0) {
+            rules_file = argv[i] + 13;
+        } else {
+            eal_argv[eal_argc++] = argv[i];
+        }
+    }
+    eal_argv[eal_argc] = NULL;
+
+    /* 1. Khởi tạo DPDK EAL và cổng mạng virtio-user */
+    uint16_t nb_ports = 0;
+    if (!init_dpdk_subsystem(eal_argc, eal_argv, &nb_ports, NULL)) {
+        free(eal_argv);
+        return 1;
+    }
+    free(eal_argv);
 
     uint16_t port_id = 0;
     printf("[Pod1] Listening on Port %u (Virtio-User from OVS)...\n", port_id);
     printf("[Pod1] Note: Pure Sink & Flow Inspector mode. All filtering was done by OVS-DPDK.\n");
 
-    /* 2. Khởi tạo Group Stats Tracker theo dõi 8 groups */
+    /* 2. Nạp bảng luật động từ cấu hình (Startup Slow-Path) */
+    struct flow_table ft;
+    if (flow_table_load(&ft, rules_file) != 0) {
+        /* Fallback kiểm tra thư mục manifests nếu chạy dev / test offline ngoài container */
+        if (flow_table_load(&ft, "manifests/ovs_flows.conf") != 0) {
+            fprintf(stderr, "[Pod1] LỖI: Không thể nạp bảng luật từ '%s'\n", rules_file);
+            cleanup_dpdk_subsystem(nb_ports);
+            return 1;
+        }
+        rules_file = "manifests/ovs_flows.conf";
+    }
+    printf("[Pod1] Đã nạp thành công bảng luật từ '%s' (%zu groups, %zu rules)\n",
+           rules_file, ft.num_groups, ft.num_rules);
+
+    /* 3. Khởi tạo Group Stats Tracker theo dõi toàn bộ Groups */
     struct group_stats_tracker gs;
-    group_stats_init(&gs, "[Pod1-GRP]");
+    group_stats_init(&gs, &ft, "[Pod1-GRP]");
 
     printf("[Pod1] Ready to receive and verify filtered traffic from OVS-DPDK!\n");
     printf("-----------------------------------------------------\n");
@@ -74,7 +112,7 @@ int main(int argc, char **argv)
 
     struct rte_mbuf *rx_pkts[BURST_SIZE];
 
-    /* 3. Vòng lặp nhận và phân tích gói tin */
+    /* 4. Vòng lặp nhận và phân tích gói tin (Fast-Path) */
     while (!force_quit) {
         uint16_t nb_rx = rte_eth_rx_burst(port_id, 0, rx_pkts, BURST_SIZE);
 
@@ -88,7 +126,7 @@ int main(int argc, char **argv)
                 total_rx_bytes += m->pkt_len;
 
                 /* Ghi nhận vào bảng Group Stats Tracker (hàm tự đếm non-IP) */
-                group_stats_record(&gs, m);
+                group_stats_record(&gs, &ft, m);
 
                 /* Phân tích protocol header (chỉ khi đủ dài để đọc an toàn) */
                 if (m->pkt_len >= MIN_L3_PARSE_LEN) {
@@ -146,16 +184,16 @@ int main(int argc, char **argv)
             last_1s_time = now;
         }
 
-        /* Chu kỳ 20 giây: In bảng thống kê 8 Groups nhận được từ OVS */
+        /* Chu kỳ 20 giây: In bảng thống kê Groups nhận được từ OVS */
         if (now - last_20s_time >= 20000000000ULL) {
             double elapsed = (double)(now - last_20s_time) / 1e9;
-            group_stats_print_table(&gs, "[Pod1-GRP]", elapsed);
+            group_stats_print_table(&gs, &ft, "[Pod1-GRP]", elapsed);
             group_stats_reset_period(&gs);
             last_20s_time = now;
         }
     }
 
-    /* 4. Bảng tổng kết khi dừng ứng dụng */
+    /* 5. Bảng tổng kết khi dừng ứng dụng */
     printf("\n=====================================================\n");
     printf("             Pod 1 Final Statistics Summary          \n");
     printf("=====================================================\n");
@@ -167,8 +205,10 @@ int main(int argc, char **argv)
     printf("Non-IPv4 Packets : %" PRIu64 "\n", gs.non_ip_pkts);
     printf("=====================================================\n");
 
-    group_stats_print_table(&gs, "[Pod1-GRP-FINAL]", 0.0);
+    group_stats_print_table(&gs, &ft, "[Pod1-GRP-FINAL]", 0.0);
 
+    group_stats_free(&gs);
+    flow_table_free(&ft);
     cleanup_dpdk_subsystem(nb_ports);
     return 0;
 }

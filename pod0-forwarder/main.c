@@ -1,4 +1,6 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <signal.h>
 #include <unistd.h>
 #include <inttypes.h>
@@ -6,6 +8,7 @@
 #include "dpdk_init.h"
 #include "pkt_utils.h"
 #include "hw_stats.h"
+#include "flow_table.h"
 #include "group_stats.h"
 
 #define BURST_SIZE 64
@@ -33,11 +36,32 @@ int main(int argc, char **argv)
     printf("  MODE: OVS_ROUTER/PASSTHROUGH (L3 Routing on vSwitch) \n");
     printf("=====================================================\n");
 
-    /* 1. Khởi tạo DPDK EAL và toàn bộ cổng mạng */
-    uint16_t nb_ports = 0;
-    if (!init_dpdk_subsystem(argc, argv, &nb_ports, NULL)) {
+    /* 0. Bóc tách tham số custom --rules-file trước khi chuyển argc/argv cho DPDK EAL */
+    const char *rules_file = "/app/ovs_flows.conf";
+    char **eal_argv = (char **)malloc((argc + 1) * sizeof(char *));
+    if (!eal_argv) {
+        fprintf(stderr, "[Pod0] Lỗi: Không thể cấp phát bộ nhớ cho eal_argv\n");
         return 1;
     }
+    int eal_argc = 0;
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--rules-file") == 0 && i + 1 < argc) {
+            rules_file = argv[++i];
+        } else if (strncmp(argv[i], "--rules-file=", 13) == 0) {
+            rules_file = argv[i] + 13;
+        } else {
+            eal_argv[eal_argc++] = argv[i];
+        }
+    }
+    eal_argv[eal_argc] = NULL;
+
+    /* 1. Khởi tạo DPDK EAL và toàn bộ cổng mạng */
+    uint16_t nb_ports = 0;
+    if (!init_dpdk_subsystem(eal_argc, eal_argv, &nb_ports, NULL)) {
+        free(eal_argv);
+        return 1;
+    }
+    free(eal_argv);
 
     if (nb_ports < 2) {
         printf("[Pod0] Warning: Found %u port(s). Need 2 ports (PCAP Ingress + Virtio Egress)!\n", nb_ports);
@@ -50,9 +74,23 @@ int main(int argc, char **argv)
            pcap_port, virtio_port);
     printf("[Pod0] Note: Transparent passthrough active. L3 Flow Table is offloaded to OVS-DPDK.\n");
 
-    /* 2. Khởi tạo Group Stats Tracker theo dõi 8 groups */
+    /* 2. Nạp bảng luật động từ cấu hình (Startup Slow-Path) */
+    struct flow_table ft;
+    if (flow_table_load(&ft, rules_file) != 0) {
+        /* Fallback kiểm tra thư mục manifests nếu chạy dev / test offline ngoài container */
+        if (flow_table_load(&ft, "manifests/ovs_flows.conf") != 0) {
+            fprintf(stderr, "[Pod0] LỖI: Không thể nạp bảng luật từ '%s'\n", rules_file);
+            cleanup_dpdk_subsystem(nb_ports);
+            return 1;
+        }
+        rules_file = "manifests/ovs_flows.conf";
+    }
+    printf("[Pod0] Đã nạp thành công bảng luật từ '%s' (%zu groups, %zu rules)\n",
+           rules_file, ft.num_groups, ft.num_rules);
+
+    /* 3. Khởi tạo Group Stats Tracker theo dõi toàn bộ Groups */
     struct group_stats_tracker gs;
-    group_stats_init(&gs, "[Pod0-GRP]");
+    group_stats_init(&gs, &ft, "[Pod0-GRP]");
 
     printf("[Pod0] Starting high-speed packet forwarding loop...\n");
     printf("-----------------------------------------------------\n");
@@ -74,7 +112,7 @@ int main(int argc, char **argv)
 
     struct rte_mbuf *pkts[BURST_SIZE];
 
-    /* 3. Vòng lặp chuyển tiếp gói tin chính */
+    /* 4. Vòng lặp chuyển tiếp gói tin chính (Fast-Path) */
     while (!force_quit) {
         uint16_t nb_rx = rte_eth_rx_burst(pcap_port, 0, pkts, BURST_SIZE);
 
@@ -98,7 +136,7 @@ int main(int argc, char **argv)
             for (uint16_t i = 0; i < nb_tx; i++) {
                 period_tx_bytes += pkts[i]->pkt_len;
                 total_tx_bytes += pkts[i]->pkt_len;
-                group_stats_record(&gs, pkts[i]);
+                group_stats_record(&gs, &ft, pkts[i]);
             }
 
             /* Nếu hàng đợi TX đầy tạm thời, giải phóng gói sót để tránh rò rỉ mbuf */
@@ -133,16 +171,16 @@ int main(int argc, char **argv)
             last_1s_time = now;
         }
 
-        /* Chu kỳ 20 giây: In bảng thống kê 8 Groups (SSOT) */
+        /* Chu kỳ 20 giây: In bảng thống kê Groups (SSOT) */
         if (now - last_20s_time >= 20000000000ULL) {
             double elapsed = (double)(now - last_20s_time) / 1e9;
-            group_stats_print_table(&gs, "[Pod0-GRP]", elapsed);
+            group_stats_print_table(&gs, &ft, "[Pod0-GRP]", elapsed);
             group_stats_reset_period(&gs);
             last_20s_time = now;
         }
     }
 
-    /* 4. Tổng kết toàn diện khi kết thúc */
+    /* 5. Tổng kết toàn diện khi kết thúc */
     printf("\n=====================================================\n");
     printf("             Pod 0 Final Statistics Summary          \n");
     printf("=====================================================\n");
@@ -152,8 +190,10 @@ int main(int argc, char **argv)
     printf("Non-IPv4 Packets : %" PRIu64 "\n", gs.non_ip_pkts);
     printf("=====================================================\n");
 
-    group_stats_print_table(&gs, "[Pod0-GRP-FINAL]", 0.0);
+    group_stats_print_table(&gs, &ft, "[Pod0-GRP-FINAL]", 0.0);
 
+    group_stats_free(&gs);
+    flow_table_free(&ft);
     cleanup_dpdk_subsystem(nb_ports);
     return 0;
 }

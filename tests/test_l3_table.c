@@ -14,8 +14,8 @@ int main(int argc, char **argv)
     printf("=====================================================\n");
 
     /* Khởi tạo EAL với cờ --no-huge --no-pci để test không cần root / hugepages */
-    char *fake_argv[] = { argv[0], "--no-huge", "--no-pci", "-m", "128", NULL };
-    int fake_argc = 5;
+    char *fake_argv[] = { argv[0], "--no-huge", "--no-pci", "-m", "128", "--file-prefix=test_l3", NULL };
+    int fake_argc = 6;
     int ret = rte_eal_init(fake_argc, fake_argv);
     if (ret < 0) {
         fprintf(stderr, "Error: rte_eal_init failed in unit test\n");

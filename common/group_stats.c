@@ -1,19 +1,39 @@
 #include "group_stats.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
 
-void group_stats_init(struct group_stats_tracker *gs, const char *name)
+void group_stats_init(struct group_stats_tracker *gs, const struct flow_table *ft, const char *name)
 {
     (void)name;
     if (!gs) return;
     memset(gs, 0, sizeof(*gs));
+
+    if (ft && ft->num_groups > 0) {
+        gs->num_groups = ft->num_groups;
+        gs->groups = (struct group_counter *)calloc(gs->num_groups, sizeof(struct group_counter));
+        if (!gs->groups) {
+            fprintf(stderr, "[GroupStats] LỖI: Không thể cấp phát bộ nhớ cho %zu groups\n", gs->num_groups);
+            gs->num_groups = 0;
+        }
+    }
 }
 
-void group_stats_record(struct group_stats_tracker *gs, struct rte_mbuf *m)
+void group_stats_free(struct group_stats_tracker *gs)
 {
-    if (unlikely(!gs || !m)) return;
+    if (!gs) return;
+    if (gs->groups) {
+        free(gs->groups);
+        gs->groups = NULL;
+    }
+    gs->num_groups = 0;
+}
+
+void group_stats_record(struct group_stats_tracker *gs, const struct flow_table *ft, struct rte_mbuf *m)
+{
+    if (unlikely(!gs || !ft || !m || !gs->groups)) return;
 
     /* Guard: đủ dài để đọc Ethernet header */
     if (unlikely(m->pkt_len < sizeof(struct rte_ether_hdr))) {
@@ -72,8 +92,8 @@ void group_stats_record(struct group_stats_tracker *gs, struct rte_mbuf *m)
     }
 
     /* Đối sánh lần lượt theo thứ tự priority giảm dần (First-match wins) */
-    for (int i = 0; i < NUM_FILTER_RULES; i++) {
-        const struct filter_rule *r = &FILTER_RULES[i];
+    for (size_t i = 0; i < ft->num_rules; i++) {
+        const struct flow_rule *r = &ft->rules[i];
 
         if (r->proto != 0 && proto != r->proto) {
             continue;
@@ -92,22 +112,26 @@ void group_stats_record(struct group_stats_tracker *gs, struct rte_mbuf *m)
         }
 
         /* Gói tin khớp rule -> cộng dồn vào group tương ứng */
-        enum group_id gid = r->group_id;
-        uint32_t pkt_len = m->pkt_len;
+        uint32_t gid = r->group_idx;
+        if (unlikely(gid >= gs->num_groups)) {
+            gs->non_ip_pkts++;
+            return;
+        }
 
+        uint32_t pkt_len = m->pkt_len;
         gs->groups[gid].period_pkts++;
         gs->groups[gid].period_bytes += pkt_len;
         gs->groups[gid].total_pkts++;
         return;
     }
 
-    /* Không khớp rule nào (không nên xảy ra vì có default catch-all) */
+    /* Không khớp rule nào */
     gs->non_ip_pkts++;
 }
 
-void group_stats_print_table(struct group_stats_tracker *gs, const char *tag, double elapsed_sec)
+void group_stats_print_table(const struct group_stats_tracker *gs, const struct flow_table *ft, const char *tag, double elapsed_sec)
 {
-    if (!gs) return;
+    if (!gs || !ft || !gs->groups) return;
     const char *pfx = tag ? tag : "[GRP]";
 
     printf("\n%s ==================== L3/L4 GROUP STATISTICS (SSOT) ====================\n", pfx);
@@ -115,8 +139,9 @@ void group_stats_print_table(struct group_stats_tracker *gs, const char *tag, do
            pfx, "Group Name", "Prio", "Action", "Period Pkts", "Throughput", "Total Pkts");
     printf("%s ---------------------+------+---------+--------------+----------------+-------------\n", pfx);
 
-    for (int i = 0; i < NUM_GROUPS; i++) {
-        const struct group_info *g = &GROUP_INFOS[i];
+    size_t count = (gs->num_groups < ft->num_groups) ? gs->num_groups : ft->num_groups;
+    for (size_t i = 0; i < count; i++) {
+        const struct flow_group *g = &ft->groups[i];
         uint64_t pkts = gs->groups[i].period_pkts;
         uint64_t bytes = gs->groups[i].period_bytes;
         uint64_t total = gs->groups[i].total_pkts;
@@ -127,7 +152,7 @@ void group_stats_print_table(struct group_stats_tracker *gs, const char *tag, do
         }
 
         printf("%s %-20s | %4u | %-7s | %12" PRIu64 " | %10.3f Mbps | %12" PRIu64 "\n",
-               pfx, g->name, g->priority, g->action_str, pkts, mbps, total);
+               pfx, g->name, g->priority, g->action, pkts, mbps, total);
     }
     printf("%s ========================================================================\n\n", pfx);
     fflush(stdout);
@@ -135,8 +160,8 @@ void group_stats_print_table(struct group_stats_tracker *gs, const char *tag, do
 
 void group_stats_reset_period(struct group_stats_tracker *gs)
 {
-    if (!gs) return;
-    for (int i = 0; i < NUM_GROUPS; i++) {
+    if (!gs || !gs->groups) return;
+    for (size_t i = 0; i < gs->num_groups; i++) {
         gs->groups[i].period_pkts = 0;
         gs->groups[i].period_bytes = 0;
     }
