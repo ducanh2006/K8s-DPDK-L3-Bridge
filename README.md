@@ -4,6 +4,18 @@ Dự án này được thiết kế nhằm xây dựng, thử nghiệm và đán
 
 ---
 
+## 🎥 Video Demo Hoạt động Hệ thống
+
+> **Mô tả:** Video thực nghiệm ghi lại quá trình triển khai cụm 3 Pods (`ovs-dpdk`, `dpdk-pod0`, `dpdk-pod1`), kiểm tra luồng định tuyến L3/L4 và đối chứng số liệu Throughput (pps, Mbps) cùng 8 nhóm luật SSOT thời gian thực.
+
+<p align="center">
+  <video src="docs/assets/demo_traffic_routing.webm" controls="controls" width="100%">
+    Trình duyệt không hỗ trợ xem trực tiếp. Bạn có thể mở video tại <code>docs/assets/demo_traffic_routing.webm</code>.
+  </video>
+</p>
+
+---
+
 ## 📌 Mục lục
 1. [Kiến trúc Tổng thể Hệ thống](#1-kiến-trúc-tổng-thể-hệ-thống)
 2. [Vòng đời Gói tin (Packet Life Cycle)](#2-vòng-đời-gói-tin-packet-life-cycle)
@@ -93,6 +105,7 @@ K8s-DPDK-L3-Bridge/
 ├── data/                           # DỮ LIỆU GÓI TIN THỬ NGHIỆM
 │   └── balanced_traffic_sample.pcap # File PCAP dùng runtime (mount vào Pod 0 qua hostPath)
 ├── docs/                           # TÀI LIỆU HƯỚNG DẪN BÁO CÁO & THUYẾT TRÌNH
+│   ├── assets/                     # Thư mục lưu trữ media (video demo_traffic_routing.webm)
 │   └── SLIDE_REPORT_GUIDE.md       # Dàn bài slide, kịch bản báo cáo và số liệu đối chứng cho Mentor
 ├── pod0-forwarder/                 # ỨNG DỤNG POD 0 (PCAP Replayer & Passthrough)
 │   ├── main.c                      # Logic Pod 0: Đọc PCAP + Thống kê 8 Groups + Passthrough sang OVS
