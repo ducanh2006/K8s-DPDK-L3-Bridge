@@ -292,8 +292,3 @@ kubectl delete pod dpdk-pod0 dpdk-pod1 ovs-dpdk --force --grace-period=0
 > Deploy lại **luôn bắt đầu từ OVS trước** (`05_deploy_k8s.sh` đã làm đúng thứ tự này) để handshake vhost-user không bị `disconnected`.
 
 ---
-
-## 👨‍💻 Thông tin Tác giả & Giấy phép
-- **Dự án:** K8s-DPDK-L3-Bridge
-- **Môi trường thử nghiệm:** Ubuntu 24.04 LTS | DPDK 24.11 | Open vSwitch 3.3.4 | K3s & K9s.
-- **Giấy phép:** Open-source theo giấy phép BSD-3-Clause (tương thích giấy phép gốc của DPDK).
