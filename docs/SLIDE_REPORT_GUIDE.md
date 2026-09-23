@@ -83,7 +83,7 @@ Hệ thống sử dụng bảng luật phân cấp theo độ ưu tiên (`priori
 * **Giải pháp**: Thiết kế bảng băm tĩnh cố định (1024 entries), trích xuất trực tiếp IPv4 header và TCP/UDP header ngay trên mbuf không qua sao chép.
 * **Thống kê 2 chu kỳ**:
   - Chu kỳ 1 giây: Cập nhật Throughput (pps, Mbps) và lỗi hàng đợi phần cứng (`imissed`).
-  - Chu kỳ 5 giây: Xuất bảng Top-5 luồng hoạt động mạnh nhất theo cặp `Src IP:Port -> Dst IP:Port`.
+  - Chu kỳ 20 giây: Xuất bảng Top-5 luồng hoạt động mạnh nhất theo cặp `Src IP:Port -> Dst IP:Port` (Mbps hiển thị 3 chữ số thập phân).
 
 ---
 

@@ -164,7 +164,7 @@ void flow_tracker_print_top(struct flow_tracker *ft, int top_n, const char *tag)
         }
     }
 
-    printf("\n%s ---------- Top Active IP:Port Traffic Flows (5s Period) ----------\n", tag ? tag : "");
+    printf("\n%s ---------- Top Active IP:Port Traffic Flows (20s Period) ----------\n", tag ? tag : "");
     printf("%s %-4s | %-21s -> %-21s | %-10s | %-9s\n",
            tag ? tag : "", "Prot", "Source IP:Port", "Dest IP:Port", "Period Pkt", "Throughput");
     printf("%s ----------------------------------------------------------------------\n", tag ? tag : "");
@@ -183,8 +183,8 @@ void flow_tracker_print_top(struct flow_tracker *ft, int top_n, const char *tag)
         snprintf(src_buf, sizeof(src_buf), "%s:%u", src_ip_str, rte_be_to_cpu_16(e->key.src_port));
         snprintf(dst_buf, sizeof(dst_buf), "%s:%u", dst_ip_str, rte_be_to_cpu_16(e->key.dst_port));
 
-        double mbps = ((double)e->period_bytes * 8.0) / (5.0 * 1e6);
-        printf("%s %-4s | %-21s -> %-21s | %-10" PRIu64 " | %6.2f Mbps\n",
+        double mbps = ((double)e->period_bytes * 8.0) / (20.0 * 1e6);
+        printf("%s %-4s | %-21s -> %-21s | %-10" PRIu64 " | %8.3f Mbps\n",
                tag ? tag : "",
                proto_to_str(e->key.proto),
                src_buf, dst_buf,

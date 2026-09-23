@@ -130,7 +130,7 @@ int main(int argc, char **argv)
     uint64_t period_tx_bytes = 0;
 
     uint64_t last_1s_time = get_current_time_ns();
-    uint64_t last_5s_time = last_1s_time;
+    uint64_t last_20s_time = last_1s_time;
 
     struct rte_mbuf *pkts[BURST_SIZE];
 
@@ -191,11 +191,11 @@ int main(int argc, char **argv)
             last_1s_time = now;
         }
 
-        /* Chu kỳ 5 giây: In Top-5 Active Flows (IP:Port & Mbps) */
-        if (now - last_5s_time >= 5000000000ULL) {
+        /* Chu kỳ 20 giây: In Top-5 Active Flows (IP:Port & Mbps) */
+        if (now - last_20s_time >= 20000000000ULL) {
             flow_tracker_print_top(&ft, 5, "[Pod0-TX]");
             flow_tracker_reset_period(&ft);
-            last_5s_time = now;
+            last_20s_time = now;
         }
     }
 
