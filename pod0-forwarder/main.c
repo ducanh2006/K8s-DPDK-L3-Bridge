@@ -82,11 +82,10 @@ int main(int argc, char **argv)
             period_rx_pkts += nb_rx;
             total_rx_pkts += nb_rx;
 
-            /* Phân tích và ghi nhận từng gói tin vào Group Stats Tracker (Zero-Copy) */
+            /* Đếm RX trước khi đẩy (offered load, kể cả gói rớt ring sau này) */
             for (uint16_t i = 0; i < nb_rx; i++) {
                 period_rx_bytes += pkts[i]->pkt_len;
                 total_rx_bytes += pkts[i]->pkt_len;
-                group_stats_record(&gs, pkts[i]);
             }
 
             /* Chế độ PASSTHROUGH: Đẩy toàn bộ sang OVS-DPDK qua virtio-user */
@@ -94,9 +93,12 @@ int main(int argc, char **argv)
             period_tx_pkts += nb_tx;
             total_tx_pkts += nb_tx;
 
+            /* Ghi nhận groups CHỈ cho nb_tx gói đẩy thành công (admitted-side,
+               khớp 1-1 với counters OVS để đối chứng E2E) */
             for (uint16_t i = 0; i < nb_tx; i++) {
                 period_tx_bytes += pkts[i]->pkt_len;
                 total_tx_bytes += pkts[i]->pkt_len;
+                group_stats_record(&gs, pkts[i]);
             }
 
             /* Nếu hàng đợi TX đầy tạm thời, giải phóng gói sót để tránh rò rỉ mbuf */
