@@ -49,6 +49,7 @@ set(EXTRA_LIBS rte_net rte_ethdev rte_kvargs rte_bus_vdev rte_bus_pci pthread nu
 add_library(common STATIC
     common/dpdk_init.c
     common/l3_table.c
+    common/flow_tracker.c
 )
 target_include_directories(common PUBLIC ${CMAKE_SOURCE_DIR}/common ${DPDK_INCLUDE_DIRS})
 target_link_libraries(common PUBLIC ${DPDK_LIBRARIES} ${DRIVER_LDFLAGS} ${EXTRA_LIBS})
