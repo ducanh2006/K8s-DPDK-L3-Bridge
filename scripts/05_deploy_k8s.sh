@@ -14,8 +14,8 @@ cd "$ROOT_DIR"
 echo -e "\033[1;34m[1/4] Xóa các Pod cũ nếu đang chạy...\033[0m"
 kubectl delete pod dpdk-pod0 dpdk-pod1 ovs-dpdk --ignore-not-found=true --grace-period=0 --force 2>/dev/null || true
 
-# Xóa các socket file cũ nếu còn tồn đọng
-rm -f /var/run/openvswitch/vhost-user-* 2>/dev/null || sudo rm -f /var/run/openvswitch/vhost-user-* 2>/dev/null || true
+# Xóa các socket file và pidfile cũ nếu còn tồn đọng
+rm -f /var/run/openvswitch/* 2>/dev/null || sudo rm -f /var/run/openvswitch/* 2>/dev/null || true
 
 # Tắt service OVS ngoài host nếu đang chạy để tránh xung đột
 if systemctl is-active --quiet openvswitch-switch 2>/dev/null; then

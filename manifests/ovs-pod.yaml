@@ -31,6 +31,9 @@ spec:
         
         mkdir -p /var/run/openvswitch /etc/openvswitch /var/log/openvswitch /var/lib/openvswitch
         
+        # Dọn dẹp các pidfile và socket cũ nếu container trước đó bị kill đột ngột
+        rm -f /var/run/openvswitch/*.pid /var/run/openvswitch/*.ctl /var/run/openvswitch/*.sock /var/run/openvswitch/br-dpdk.*
+        
         # 1. Khởi tạo database Open vSwitch nếu chưa tồn tại
         if [ ! -f /etc/openvswitch/conf.db ]; then
             echo "[OVS-Pod] Tạo database OVS mới..."
