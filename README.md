@@ -28,25 +28,32 @@ Dự án này được thiết kế nhằm xây dựng, thử nghiệm và đán
 ## 1. Kiến trúc Tổng thể Hệ thống
 
 ```text
+                  +-------------------------------------------------------------+
+                  |  Kubernetes ConfigMap: ovs-flows (ovs_flows.conf - 8 Groups)|
+                  +-------------------------------------------------------------+
+                                      │                                 │
+                     mount /app/ovs_flows.conf         mount /app/ovs_flows.conf
+                                      ▼                                 ▼
 +------------------------------------------+        +------------------------------------------+
 |            Pod 0: dpdk-pod0              |        |             Pod 1: dpdk-pod1             |
 |       (PCAP Streamer & Passthrough)      |        |       (High-Speed Traffic Sink)          |
 |                                          |        |                                          |
-| [File PCAP: balanced_traffic_sample.pcap]|        |                                          |
-|                 │                        |        |                                          |
-|       DPDK Port 0 (net_pcap)             |        |                                          |
-|                 ▼                        |        |                                          |
-|  +------------------------------------+  |        |  +------------------------------------+  |
-|  |  Group Stats (8 groups SSOT):      |  |        |  |  Group Stats (8 groups SSOT):      |  |
-|  |  3 DROP (fb/aws/udp) | 5 FORWARD   |  |        |  |  chỉ còn 5 nhóm FORWARD            |  |
-|  +------------------------------------+  |        |  +------------------------------------+  |
-|  | TX toàn bộ sang Port 1 (Virtio)    |  |        |  | main.c (pps/Mbps + groups + HW)    |  |
-|  +------------------------------------+  |        |  +------------------------------------+  |
-|  |    common/ (dpdk_init, group_stats)|  |        |  |    common/ (dpdk_init, group_stats)|  |
-|  +------------------------------------+  |        |  +------------------------------------+  |
-+------------------------------------------+        +------------------------------------------+
-                 │                                                      ▲                     
-       DPDK Port 1 (virtio-user0)                         DPDK Port 0 (virtio-user0)       
+| [File PCAP: balanced_traffic_sample.pcap]|        | [Runtime Parser: nạp luật lúc startup]   |
+|                 │                        |        |                 │                        |
+|       DPDK Port 0 (net_pcap)             |        |                 ▼                        |
+|                 ▼                        |        |  +------------------------------------+  |
+|  +------------------------------------+  |        |  |  Group Stats (8 groups SSOT):      |  |
+|  |  Group Stats (8 groups SSOT):      |  |        |  |  chỉ còn 5 nhóm FORWARD            |  |
+|  |  3 DROP (fb/aws/udp) | 5 FORWARD   |  |        |  +------------------------------------+  |
+|  +------------------------------------+  |        |  | main.c (pps/Mbps + groups + HW)    |  |
+|  | TX toàn bộ sang Port 1 (Virtio)    |  |        |  +------------------------------------+  |
+|  +------------------------------------+  |        |  | common/ (dpdk_init, flow_table,    |  |
+|  | common/ (dpdk_init, flow_table,    |  |        |  |          group_stats)              |  |
+|  |          group_stats)              |  |        |  +------------------------------------+  |
+|  +------------------------------------+  |        +------------------------------------------+
++------------------------------------------+                            ▲
+                 │                                                      │
+       DPDK Port 1 (virtio-user0)                         DPDK Port 0 (virtio-user0)
 +----------------▼------------------------------------------------------│----------------------------------------+
 |                                                                                                                |
 | Pod: ovs-dpdk (Switch ảo OVS-DPDK chạy trong Pod - Zero-copy Shared Memory)                                    |
@@ -153,7 +160,10 @@ Chạy ở quyền user thông thường:
 # Biên dịch cả 2 ứng dụng DPDK bằng CMake
 bash scripts/03_build_all.sh
 
-# Chạy unit test offline kiểm tra bảng luật L3
+# 1. Chạy unit test offline kiểm thử Runtime Flow Table Parser (8 groups, 16 rules)
+./build/test_flow_table
+
+# 2. Chạy unit test offline kiểm thử bảng tra cứu L3 LPM
 ./build/test_l3_table
 ```
 
@@ -174,6 +184,18 @@ bash scripts/05_deploy_k8s.sh
 # Xem bảng route OVS, thống kê DPDK và bảng 8 Groups đối chứng E2E
 bash scripts/06_verify_traffic.sh
 ```
+
+### 💡 Cập nhật Bảng luật SSOT lúc Vận hành (Không cần Rebuild)
+Nhờ kiến trúc **Runtime Parser + Kubernetes ConfigMap**, khi bạn muốn thay đổi chính sách lọc gói (ví dụ: đổi IP của một nhóm, thêm dải IP mới hoặc đổi hành động DROP/FORWARD):
+1. **Sửa cấu hình:** Chỉnh sửa file [manifests/ovs_flows.conf](manifests/ovs_flows.conf) và [manifests/ovs-flows-configmap.yaml](manifests/ovs-flows-configmap.yaml).
+2. **Nạp luật mới vào Kubernetes & Khởi động lại Pods:**
+   ```bash
+   # Cập nhật ConfigMap lên cụm K8s
+   kubectl apply -f manifests/ovs-flows-configmap.yaml
+
+   # Khởi động lại 2 Pods để nạp luật mới (HOÀN TOÀN KHÔNG CẦN build lại binary hay docker image)
+   kubectl delete pod dpdk-pod0 dpdk-pod1 && kubectl apply -f manifests/pod1.yaml -f manifests/pod0.yaml
+   ```
 
 ### Dừng cụm khi không dùng
 ```bash
