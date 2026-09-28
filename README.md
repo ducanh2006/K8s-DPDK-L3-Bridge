@@ -119,7 +119,6 @@ K8s-DPDK-L3-Bridge/
 │   └── Dockerfile                  # Đóng gói image pod1:latest
 ├── manifests/                      # KUBERNETES MANIFESTS & CẤU HÌNH OVS
 │   ├── ovs_flows.conf              # Single Source of Truth (SSOT) cho 8 Groups và 16 Filter Rules
-│   ├── ovs-flows-configmap.yaml    # Kubernetes ConfigMap chứa luật L3/L4 SSOT nạp động vào Pods
 │   ├── ovs-pod.yaml                # Manifest Pod OVS-DPDK chạy vSwitch ảo trong K8s
 │   ├── ovs-setup.sh                # Script tạo switch br-dpdk và nạp flows tự động từ ovs_flows.conf
 │   ├── pod0.yaml                   # Manifest triển khai Pod 0 (mount PCAP data, ConfigMap, hugepages, ovs socket)
@@ -129,9 +128,10 @@ K8s-DPDK-L3-Bridge/
 │   ├── 01_setup_host.sh            # (Legacy) Cài OVS trên Host — KHÔNG dùng nữa, OVS chạy trong Pod
 │   ├── 03_build_all.sh             # Biên dịch toàn bộ bằng CMake
 │   ├── 04_build_docker.sh          # Build 2 Docker images và nạp vào K3s image store
-│   ├── 05_deploy_k8s.sh            # Triển khai toàn bộ cụm K8s (ConfigMap, ovs-dpdk, pod0, pod1)
+│   ├── 05_deploy_k8s.sh            # Triển khai toàn bộ cụm K8s (tự động nạp ConfigMap từ ovs_flows.conf, ovs-dpdk, pod0, pod1)
 │   ├── 06_verify_traffic.sh        # Kiểm tra thống kê pps, throughput và bảng 8 Groups đối chứng E2E
-│   └── 07_stop_k8s.sh              # Dừng toàn bộ Pods và dọn socket vhost-user tồn đọng
+│   ├── 07_stop_k8s.sh              # Dừng toàn bộ Pods và dọn socket vhost-user tồn đọng
+│   └── update_flows.sh             # Tự động cập nhật bảng luật từ ovs_flows.conf và nạp lại vào K8s/OVS/Pods
 ├── tests/                          # UNIT TEST TỰ ĐỘNG
 │   ├── test_l3_table.c             # Kiểm thử offline bảng luật L3 (chạy không cần quyền root)
 │   └── test_flow_table.c           # Kiểm thử offline bộ Runtime Parser & đối sánh luật (không cần root)
@@ -187,15 +187,12 @@ bash scripts/06_verify_traffic.sh
 
 ### 💡 Cập nhật Bảng luật SSOT lúc Vận hành (Không cần Rebuild)
 Nhờ kiến trúc **Runtime Parser + Kubernetes ConfigMap**, khi bạn muốn thay đổi chính sách lọc gói (ví dụ: đổi IP của một nhóm, thêm dải IP mới hoặc đổi hành động DROP/FORWARD):
-1. **Sửa cấu hình:** Chỉnh sửa file [manifests/ovs_flows.conf](manifests/ovs_flows.conf) và [manifests/ovs-flows-configmap.yaml](manifests/ovs-flows-configmap.yaml).
-2. **Nạp luật mới vào Kubernetes & Khởi động lại Pods:**
+1. **Sửa cấu hình:** Chỉnh sửa **duy nhất** file [manifests/ovs_flows.conf](manifests/ovs_flows.conf).
+2. **Chạy script đồng bộ tự động 1 lệnh duy nhất:**
    ```bash
-   # Cập nhật ConfigMap lên cụm K8s
-   kubectl apply -f manifests/ovs-flows-configmap.yaml
-
-   # Khởi động lại 2 Pods để nạp luật mới (HOÀN TOÀN KHÔNG CẦN build lại binary hay docker image)
-   kubectl delete pod dpdk-pod0 dpdk-pod1 && kubectl apply -f manifests/pod1.yaml -f manifests/pod0.yaml
+   bash scripts/update_flows.sh
    ```
+   *(Script sẽ tự động nạp ConfigMap lên K8s, hot-reload flow vào switch ảo OVS-DPDK và khởi động lại 2 Pods mà hoàn toàn **không cần biên dịch lại code hay build lại Docker image**).*
 
 ### Dừng cụm khi không dùng
 ```bash
