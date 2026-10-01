@@ -39,10 +39,9 @@ int main(int argc, char **argv)
     printf("  MODE: RECEIVE_FROM_OVS (Verifying routed flows)     \n");
     printf("=====================================================\n");
 
-    /* 0. Bóc tách tham số custom (--rules-file, --ip, --gateway) trước khi chuyển argc/argv cho DPDK EAL */
+    /* 0. Bóc tách tham số custom (--rules-file, --ip) trước khi chuyển argc/argv cho DPDK EAL */
     const char *rules_file = "/app/ovs_flows.conf";
     const char *pod_ip = "192.168.20.2/24";
-    const char *gateway_ip = "192.168.20.1";
     char **eal_argv = (char **)malloc((argc + 1) * sizeof(char *));
     if (!eal_argv) {
         fprintf(stderr, "[Pod1] Lỗi: Không thể cấp phát bộ nhớ cho eal_argv\n");
@@ -58,10 +57,6 @@ int main(int argc, char **argv)
             pod_ip = argv[++i];
         } else if (strncmp(argv[i], "--ip=", 5) == 0) {
             pod_ip = argv[i] + 5;
-        } else if (strcmp(argv[i], "--gateway") == 0 && i + 1 < argc) {
-            gateway_ip = argv[++i];
-        } else if (strncmp(argv[i], "--gateway=", 10) == 0) {
-            gateway_ip = argv[i] + 10;
         } else {
             eal_argv[eal_argc++] = argv[i];
         }
@@ -83,14 +78,13 @@ int main(int argc, char **argv)
     rte_eth_macaddr_get(port_id, &eth_addr);
 
     printf("-----------------------------------------------------\n");
-    printf("  [Pod1] L3 Interface Configuration:\n");
-    printf("  -> Port %u (Virtio-User Ingress from OVS Egress):\n", port_id);
-    printf("     - Assigned IP  : %s\n", pod_ip);
-    printf("     - Assigned MAC : %02X:%02X:%02X:%02X:%02X:%02X\n",
+    printf("  [Pod1] Cấu hình Cổng Mạng (L3/L2 Interface):\n");
+    printf("  -> Port %u (Virtio-User Ingress nhận từ OVS):\n", port_id);
+    printf("     - Địa chỉ IP  : %s\n", pod_ip);
+    printf("     - Địa chỉ MAC : %02X:%02X:%02X:%02X:%02X:%02X\n",
            eth_addr.addr_bytes[0], eth_addr.addr_bytes[1],
            eth_addr.addr_bytes[2], eth_addr.addr_bytes[3],
            eth_addr.addr_bytes[4], eth_addr.addr_bytes[5]);
-    printf("     - Default GW   : %s (OVS Egress: vhost-user-1)\n", gateway_ip);
     printf("  -> Note: Pure Sink & Flow Inspector mode. Filtering verified.\n");
     printf("-----------------------------------------------------\n");
 

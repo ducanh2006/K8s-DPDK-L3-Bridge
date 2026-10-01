@@ -23,7 +23,6 @@ spec:
       - "--vdev=virtio_user0,path=/var/run/openvswitch/vhost-user-0,server=1,mac=00:00:00:00:00:01"
       - "--rules-file=/app/ovs_flows.conf"
       - "--ip=192.168.10.2/24"
-      - "--gateway=192.168.10.1"
     resources:
       requests:
         memory: "512Mi"

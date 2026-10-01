@@ -28,40 +28,39 @@ Dự án này được thiết kế nhằm xây dựng, thử nghiệm và đán
 ## 1. Kiến trúc Tổng thể Hệ thống
 
 ```text
-                  +-------------------------------------------------------------+
-                  |  Kubernetes ConfigMap: ovs-flows (ovs_flows.conf - 8 Groups)|
-                  +-------------------------------------------------------------+
-                                      │                                 │
-                     mount /app/ovs_flows.conf         mount /app/ovs_flows.conf
-                                      ▼                                 ▼
-+------------------------------------------+        +------------------------------------------+
-|            Pod 0: dpdk-pod0              |        |             Pod 1: dpdk-pod1             |
-|       (PCAP Streamer & Passthrough)      |        |       (High-Speed Traffic Sink)          |
-|                                          |        |                                          |
-| [File PCAP: balanced_traffic_sample.pcap]|        | [Runtime Parser: nạp luật lúc startup]   |
-|                 │                        |        |                 │                        |
-|       DPDK Port 0 (net_pcap)             |        |                 ▼                        |
-|                 ▼                        |        |  +------------------------------------+  |
-|  +------------------------------------+  |        |  |  Group Stats (8 groups SSOT):      |  |
-|  |  Group Stats (8 groups SSOT):      |  |        |  |  chỉ còn 5 nhóm FORWARD            |  |
-|  |  3 DROP (fb/aws/udp) | 5 FORWARD   |  |        |  +------------------------------------+  |
-|  +------------------------------------+  |        |  | main.c (pps/Mbps + groups + HW)    |  |
-|  | TX toàn bộ sang Port 1 (Virtio)    |  |        |  +------------------------------------+  |
-|  +------------------------------------+  |        |  | common/ (dpdk_init, flow_table,    |  |
-|  | common/ (dpdk_init, flow_table,    |  |        |  |          group_stats)              |  |
-|  |          group_stats)              |  |        |  +------------------------------------+  |
-|  +------------------------------------+  |        +------------------------------------------+
-+------------------------------------------+                            ▲
-                 │                                                      │
-       DPDK Port 1 (virtio-user0)                         DPDK Port 0 (virtio-user0)
-+----------------▼------------------------------------------------------│----------------------------------------+
-|                                                                                                                |
-| Pod: ovs-dpdk (Switch ảo OVS-DPDK chạy trong Pod - Zero-copy Shared Memory)                                    |
-|                                     Bridge: br-dpdk                                                            |
-|              Bảng route L3/L4 từ manifests/ovs_flows.conf (SSOT, 8 groups)                                     |
-|    [Port: vhost-user-0]  <==== OpenFlow L3/L4 Routing (DROP fb/aws/udp, FWD còn lại) ===>  [Port: vhost-user-1]|
-|    (dpdkvhostuserclient)                                             (dpdkvhostuserclient)                     |
-+----------------------------------------------------------------------------------------------------------------+
++-------------------------------------------------+        +-------------------------------------------------+
+|               Pod 0: dpdk-pod0                  |        |                Pod 1: dpdk-pod1                 |
+|         (PCAP Streamer & Passthrough)           |        |            (High-Speed Traffic Sink)            |
+|       Subnet A: 192.168.10.0/24                 |        |          Subnet B: 192.168.20.0/24              |
+|                                                 |        |                                                 |
+|  [File PCAP: balanced_traffic_sample.pcap]      |        |  [Runtime Parser: nạp luật lúc startup]         |
+|                  │                              |        |                  │                              |
+|        DPDK Port 0 (net_pcap)                   |        |                  ▼                              |
+|                  ▼                              |        |   +------------------------------------------+  |
+|   +------------------------------------------+  |        |   | Group Stats (8 groups SSOT):             |  |
+|   | Group Stats (8 groups SSOT):             |  |        |   | Chỉ còn 5 nhóm FORWARD                   |  |
+|   | 3 DROP (fb/aws/udp) | 5 FORWARD          |  |        |   +------------------------------------------+  |
+|   +------------------------------------------+  |        |   | main.c (pps/Mbps + groups + HW stats)    |  |
+|   | TX toàn bộ sang Port 1 (Passthrough)     |  |        |   +------------------------------------------+  |
+|   +------------------------------------------+  |        |   | CỔNG DPDK PORT 0 (virtio-user0):         |  |
+|   | CỔNG DPDK PORT 1 (virtio-user0):         |  |        |   | • IP : 192.168.20.2/24                   |  |
+|   | • IP : 192.168.10.2/24                   |  |        |   | • MAC: 00:00:00:00:00:02                 |  |
+|   | • MAC: 00:00:00:00:00:01                 |  |        |   +------------------------------------------+  |
+|   +------------------------------------------+  |        +-------------------------------------------------+
++-------------------------------------------------+                                 ▲
+                     │                                                              │
+         DPDK Port 1 (virtio-user0)                                     DPDK Port 0 (virtio-user0)
+                     │ (IP: 192.168.10.2/24)                                        │ (IP: 192.168.20.2/24)
++--------------------▼--------------------------------------------------------------│------------------------------------+
+|                                                                                                                        |
+|  Pod: ovs-dpdk (Switch ảo OVS-DPDK) - Bridge: br-dpdk                                                                  |
+|                                                                                                                        |
+|      [CỔNG INGRESS: vhost-user-0]               BẢNG ĐỊNH TUYẾN OPENFLOW L3/L4             [CỔNG EGRESS: vhost-user-1]     |
+|      • IP : 192.168.10.1/24              (16 Rules / 8 Groups SSOT)                • IP : 192.168.20.1/24              |
+|      • MAC: 00:00:00:AA:00:01     ═════>   • DROP   : fb, aws, udp_other   ═════>  • MAC: 00:00:00:AA:00:02            |
+|      Type: dpdkvhostuserclient             • FORWARD: youtube, web, dns, def       Type: dpdkvhostuserclient           |
+|                                                                                                                        |
++------------------------------------------------------------------------------------------------------------------------+
 ```
 
 ---
@@ -136,12 +135,12 @@ flowchart LR
 
 ### 2.3. Bảng Phân Tích Định Tuyến & Cấu Hình L3 4 Đầu Mạng
 
-| Thành phần mạng | Tên Interface | Địa chỉ IP (L3) | Địa chỉ MAC (L2) | Default Gateway | Vai trò mạng |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Pod 0 (Forwarder)** | `virtio-user0` | `192.168.10.2/24` | `00:00:00:00:00:01` | `192.168.10.1` | Trạm phát lưu lượng (Subnet A) |
-| **OVS Ingress Port** | `vhost-user-0` | `192.168.10.1/24` | `00:00:00:AA:00:01` | *N/A (Gateway)* | Cổng tiếp nhận / Ingress Gateway |
-| **OVS Egress Port** | `vhost-user-1` | `192.168.20.1/24` | `00:00:00:AA:00:02` | *N/A (Gateway)* | Cổng định tuyến / Egress Gateway |
-| **Pod 1 (Responder)** | `virtio-user0` | `192.168.20.2/24` | `00:00:00:00:00:02` | `192.168.20.1` | Trạm đích / Traffic Sink (Subnet B) |
+| Thành phần mạng | Tên Interface | Địa chỉ IP (L3) | Địa chỉ MAC (L2) | Vai trò mạng |
+| :--- | :--- | :--- | :--- | :--- |
+| **Pod 0 (Forwarder)** | `virtio-user0` | `192.168.10.2/24` | `00:00:00:00:00:01` | Trạm phát lưu lượng (Subnet A) |
+| **OVS Ingress Port** | `vhost-user-0` | `192.168.10.1/24` | `00:00:00:AA:00:01` | Cổng Ingress của Switch ảo |
+| **OVS Egress Port** | `vhost-user-1` | `192.168.20.1/24` | `00:00:00:AA:00:02` | Cổng Egress của Switch ảo |
+| **Pod 1 (Responder)** | `virtio-user0` | `192.168.20.2/24` | `00:00:00:00:00:02` | Trạm đích / Traffic Sink (Subnet B) |
 
 ---
 
