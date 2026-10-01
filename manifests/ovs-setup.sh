@@ -28,13 +28,32 @@ chmod 777 "$SOCK_DIR"
 echo "[1/3] Tạo bridge $BRIDGE (datapath_type=netdev)..."
 ovs-vsctl --may-exist add-br $BRIDGE -- set bridge $BRIDGE datapath_type=netdev
 
-# 2. Tạo 2 cổng vhost-user-client kết nối với Pods
-echo "[2/3] Tạo 2 cổng $PORT0 và $PORT1..."
+# 2. Tạo 2 cổng vhost-user-client kết nối với Pods và gán IP / MAC cho Router Gateway
+IP_PORT0="192.168.10.1/24"
+MAC_PORT0="00:00:00:aa:00:01"
+IP_PORT1="192.168.20.1/24"
+MAC_PORT1="00:00:00:aa:00:02"
+
+echo "[2/3] Tạo và cấu hình L3 cho 2 cổng vSwitch ($PORT0 và $PORT1)..."
 ovs-vsctl --may-exist add-port $BRIDGE $PORT0 -- \
-    set Interface $PORT0 type=dpdkvhostuserclient options:vhost-server-path="$SOCK_DIR/$PORT0"
+    set Interface $PORT0 type=dpdkvhostuserclient \
+    options:vhost-server-path="$SOCK_DIR/$PORT0" \
+    mac=\"$MAC_PORT0\" \
+    external_ids:ip-address=\"$IP_PORT0\"
 
 ovs-vsctl --may-exist add-port $BRIDGE $PORT1 -- \
-    set Interface $PORT1 type=dpdkvhostuserclient options:vhost-server-path="$SOCK_DIR/$PORT1"
+    set Interface $PORT1 type=dpdkvhostuserclient \
+    options:vhost-server-path="$SOCK_DIR/$PORT1" \
+    mac=\"$MAC_PORT1\" \
+    external_ids:ip-address=\"$IP_PORT1\"
+
+echo -e "\033[1;36m-----------------------------------------------------\033[0m"
+echo -e "\033[1;36m  BẢNG CẤU HÌNH L3 TOPO MẠNG (4 NETWORK ENDPOINTS):  \033[0m"
+echo -e "\033[1;36m  1. Pod 0 (Forwarder)  : 192.168.10.2/24 | MAC: 00:00:00:00:00:01 | GW: 192.168.10.1\033[0m"
+echo -e "\033[1;36m  2. OVS Ingress Port   : 192.168.10.1/24 | MAC: $MAC_PORT0 | Port: $PORT0\033[0m"
+echo -e "\033[1;36m  3. OVS Egress Port    : 192.168.20.1/24 | MAC: $MAC_PORT1 | Port: $PORT1\033[0m"
+echo -e "\033[1;36m  4. Pod 1 (Responder)  : 192.168.20.2/24 | MAC: 00:00:00:00:00:02 | GW: 192.168.20.1\033[0m"
+echo -e "\033[1;36m-----------------------------------------------------\033[0m"
 
 # 3. Cấu hình bảng luật định tuyến L3 trên OVS-DPDK (Tự động đọc từ manifests/ovs_flows.conf)
 echo "[3/3] Nạp OpenFlow L3/L4 Routing & Filtering Table vào switch ảo $BRIDGE..."

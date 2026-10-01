@@ -69,6 +69,8 @@ Dự án này được thiết kế nhằm xây dựng, thử nghiệm và đán
 
 ## 2. Vòng đời Gói tin (Packet Life Cycle)
 
+### 2.1. Sơ đồ Tuần tự Giao tiếp (Sequence Diagram)
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -90,6 +92,76 @@ sequenceDiagram
         P1->>P1: Cập nhật thống kê pps, Mbps, bảng 8 Groups và free buffer
     end
 ```
+
+### 2.2. Sơ đồ Luồng Đi & Biến đổi Gói tin (Chi tiết từ L2 MAC đến L3 IP & TTL)
+
+Sơ đồ thể hiện đầy đủ định danh **Địa chỉ MAC (Tầng L2)** và **Địa chỉ IP (Tầng L3)** của từng nút mạng/cổng giao tiếp, cùng sự biến đổi header của gói tin qua từng chặng theo số liệu thực nghiệm:
+
+```mermaid
+flowchart LR
+    %% 1. Node Pod 0
+    subgraph P0 ["Pod 0: dpdk-pod0 (Sender)"]
+        direction TB
+        N0["<b>Interface:</b> virtio-user0<br><b>IP:</b> <code>192.168.10.2/24</code><br><b>MAC:</b> <code>00:00:00:00:00:01</code><br><b>Default GW:</b> <code>192.168.10.1</code>"]
+    end
+
+    %% 2. Node OVS-DPDK
+    subgraph OVS ["Pod: ovs-dpdk (L3 Switch / Router)"]
+        direction TB
+        ROUTER{"<b>Switch ảo br-dpdk</b><br>16 Rules / 8 Groups SSOT<br>• Ingress Port: <code>192.168.10.1/24</code> (MAC: 00:00:00:AA:00:01)<br>• Egress Port: <code>192.168.20.1/24</code> (MAC: 00:00:00:AA:00:02)"}
+        DROP["🚫 <b>Action: DROP</b><br>(FB / AWS / UDP khác)"]
+        ROUTER -- "Nhóm cấm" --> DROP
+    end
+
+    %% 3. Node Pod 1
+    subgraph P1 ["Pod 1: dpdk-pod1 (Traffic Sink)"]
+        direction TB
+        N1["<b>Interface:</b> virtio-user0<br><b>IP:</b> <code>192.168.20.2/24</code><br><b>MAC:</b> <code>00:00:00:00:00:02</code><br><b>Default GW:</b> <code>192.168.20.1</code>"]
+    end
+
+    %% Luồng đi và Biến đổi Header
+    N0 ==> |"<b>[Chặng 1: Pod 0 ➔ OVS Ingress]</b><br>• Subnet: 192.168.10.0/24<br>• Src MAC: <code>00:00:00:00:00:01</code><br>• Dst MAC: <code>00:00:00:AA:00:01</code> (GW)<br>• IP Payload: Giữ nguyên từ PCAP"| ROUTER
+
+    ROUTER ==> |"<b>[Chặng 2: OVS Egress ➔ Pod 1]</b><br>• Subnet: 192.168.20.0/24<br>• Chuyển tiếp luồng hợp lệ (5 nhóm)<br>• Hủy hoàn toàn 3 nhóm cấm (DROP)"| N1
+
+    %% Styling
+    style P0 fill:#e8f4fd,stroke:#1976d2,stroke-width:2px
+    style OVS fill:#fef9e7,stroke:#f39c12,stroke-width:2px
+    style P1 fill:#eafaf1,stroke:#27ae60,stroke-width:2px
+    style DROP fill:#fdedec,stroke:#e74c3c,stroke-width:1.5px
+    style ROUTER fill:#ffffff,stroke:#7f8c8d,stroke-width:2px
+```
+
+---
+
+### 2.3. Bảng Phân Tích Định Tuyến & Cấu Hình L3 4 Đầu Mạng
+
+| Thành phần mạng | Tên Interface | Địa chỉ IP (L3) | Địa chỉ MAC (L2) | Default Gateway | Vai trò mạng |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Pod 0 (Forwarder)** | `virtio-user0` | `192.168.10.2/24` | `00:00:00:00:00:01` | `192.168.10.1` | Trạm phát lưu lượng (Subnet A) |
+| **OVS Ingress Port** | `vhost-user-0` | `192.168.10.1/24` | `00:00:00:AA:00:01` | *N/A (Gateway)* | Cổng tiếp nhận / Ingress Gateway |
+| **OVS Egress Port** | `vhost-user-1` | `192.168.20.1/24` | `00:00:00:AA:00:02` | *N/A (Gateway)* | Cổng định tuyến / Egress Gateway |
+| **Pod 1 (Responder)** | `virtio-user0` | `192.168.20.2/24` | `00:00:00:00:00:02` | `192.168.20.1` | Trạm đích / Traffic Sink (Subnet B) |
+
+---
+
+### 2.4. Diễn giải Luồng Gói tin Đi qua 3 Khối
+
+1. **Tại Pod 0 (`dpdk-pod0`)**:
+   * Cổng mạng `virtio-user0` được gán IP `192.168.10.2/24` và MAC `00:00:00:00:00:01`, định tuyến qua Gateway OVS `192.168.10.1`.
+   * Gói tin thực tế từ file `balanced_traffic_sample.pcap` được nạp vào qua **DPDK Port 0 (`net_pcap`)**.
+   * Pod 0 bóc tách header L3/L4 ghi nhận thống kê vào bảng 8 nhóm SSOT (**Offered Load**).
+   * Chế độ **Transparent Passthrough**: Pod 0 chuyển tiếp nguyên vẹn gói tin qua **DPDK Port 1 (`virtio-user0`)** sang OVS qua bộ nhớ chia sẻ Hugepages.
+2. **Tại Switch ảo OVS-DPDK (`br-dpdk`)**:
+   * OVS tiếp nhận gói tin tại **Cổng Ingress `vhost-user-0`** (`192.168.10.1/24`, MAC `00:00:00:AA:00:01`).
+   * Gói tin đi vào bảng định tuyến **OpenFlow L3/L4** (đối chiếu IP đích `nw_dst` và Port `tp_dst`):
+     * Nếu thuộc nhóm cấm (Facebook, AWS, UDP khác) $\rightarrow$ Gói tin bị **DROP** (hủy bỏ ngay tại switch, thu hồi mbuf, counters DROP tăng).
+     * Nếu thuộc nhóm cho phép (YouTube, Web HTTP/HTTPS, DNS, Default) $\rightarrow$ OVS thực hiện chuyển tiếp định tuyến sang **Cổng Egress `vhost-user-1`** (`192.168.20.1/24`, MAC `00:00:00:AA:00:02`).
+3. **Tại Pod 1 (`dpdk-pod1`)**:
+   * Cổng mạng `virtio-user0` được gán IP `192.168.20.2/24` và MAC `00:00:00:00:00:02`, Gateway `192.168.20.1`.
+   * Pod 1 đón nhận gói tin từ Hugepages thông qua **DPDK Port 0 (`virtio-user0`)**.
+   * Bóc tách IP Header để thống kê: chứng minh nhóm cấm bị lọc sạch (bằng 0), chỉ còn 5 nhóm FORWARD.
+   * Tính toán Throughput (pps, Mbps) và hoàn trả bộ nhớ (`rte_pktmbuf_free`). Gói tin kết thúc vòng đời tại đây.
 
 ---
 

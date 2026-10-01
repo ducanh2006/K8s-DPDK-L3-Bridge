@@ -8,6 +8,7 @@ metadata:
 spec:
   restartPolicy: Never
   hostNetwork: true
+  hostPID: true
   containers:
   - name: ovs-switch
     image: ubuntu:24.04
@@ -31,37 +32,45 @@ spec:
         
         mkdir -p /var/run/openvswitch /etc/openvswitch /var/log/openvswitch /var/lib/openvswitch
         
-        # Dọn dẹp các pidfile và socket cũ nếu container trước đó bị kill đột ngột
-        rm -f /var/run/openvswitch/*.pid /var/run/openvswitch/*.ctl /var/run/openvswitch/*.sock /var/run/openvswitch/br-dpdk.*
-        
-        # 1. Khởi tạo database Open vSwitch nếu chưa tồn tại
-        if [ ! -f /etc/openvswitch/conf.db ]; then
-            echo "[OVS-Pod] Tạo database OVS mới..."
-            /usr/bin/ovsdb-tool create /etc/openvswitch/conf.db /usr/share/openvswitch/vswitch.ovsschema
+        # 1. Kiểm tra ovsdb-server
+        if ! /usr/bin/ovs-vsctl --timeout=2 show &>/dev/null; then
+            echo "[OVS-Pod] Khởi tạo ovsdb-server..."
+            if [ ! -f /etc/openvswitch/conf.db ]; then
+                echo "[OVS-Pod] Tạo database OVS mới..."
+                /usr/bin/ovsdb-tool create /etc/openvswitch/conf.db /usr/share/openvswitch/vswitch.ovsschema
+            fi
+            rm -f /var/run/openvswitch/ovsdb-server.pid
+            /usr/sbin/ovsdb-server --remote=punix:/var/run/openvswitch/db.sock \
+                                   --remote=db:Open_vSwitch,Open_vSwitch,manager_options \
+                                   --pidfile=/var/run/openvswitch/ovsdb-server.pid --detach || true
+            sleep 1
+        else
+            echo "[OVS-Pod] ovsdb-server đang hoạt động sẵn sàng."
         fi
 
-        # 2. Khởi động ovsdb-server
-        echo "[OVS-Pod] Bật ovsdb-server..."
-        /usr/sbin/ovsdb-server --remote=punix:/var/run/openvswitch/db.sock \
-                               --remote=db:Open_vSwitch,Open_vSwitch,manager_options \
-                               --pidfile=/var/run/openvswitch/ovsdb-server.pid --detach
+        # 2. Cấu hình cờ DPDK
+        /usr/bin/ovs-vsctl --no-wait init || true
+        /usr/bin/ovs-vsctl --no-wait set Open_vSwitch . other_config:dpdk-init=true || true
+        /usr/bin/ovs-vsctl --no-wait set Open_vSwitch . other_config:dpdk-socket-mem="256" || true
+        /usr/bin/ovs-vsctl --no-wait set Open_vSwitch . other_config:dpdk-extra="--in-memory" || true
 
-        # 3. Khởi tạo và kích hoạt chế độ DPDK trong OVS
-        /usr/bin/ovs-vsctl --no-wait init
-        /usr/bin/ovs-vsctl --no-wait set Open_vSwitch . other_config:dpdk-init=true
-        /usr/bin/ovs-vsctl --no-wait set Open_vSwitch . other_config:dpdk-socket-mem="256"
-        /usr/bin/ovs-vsctl --no-wait set Open_vSwitch . other_config:dpdk-extra="--in-memory"
-
-        # 4. Khởi động ovs-vswitchd (bản DPDK)
-        echo "[OVS-Pod] Bật ovs-vswitchd daemon..."
-        OVS_DAEMON="/usr/lib/openvswitch-switch-dpdk/ovs-vswitchd-dpdk"
-        if [ ! -f "$OVS_DAEMON" ]; then
-            OVS_DAEMON="/usr/sbin/ovs-vswitchd"
+        # 3. Kiểm tra ovs-vswitchd
+        dpdk_status=$(/usr/bin/ovs-vsctl get Open_vSwitch . dpdk_initialized 2>/dev/null || echo "false")
+        if [ "$dpdk_status" != "true" ]; then
+            echo "[OVS-Pod] Bật ovs-vswitchd daemon (DPDK mode)..."
+            /usr/bin/ovs-appctl -t ovs-vswitchd exit 2>/dev/null || true
+            sleep 1
+            rm -f /var/run/openvswitch/ovs-vswitchd.pid
+            OVS_DAEMON="/usr/lib/openvswitch-switch-dpdk/ovs-vswitchd-dpdk"
+            if [ ! -f "$OVS_DAEMON" ]; then
+                OVS_DAEMON="/usr/sbin/ovs-vswitchd"
+            fi
+            $OVS_DAEMON unix:/var/run/openvswitch/db.sock \
+                        --pidfile=/var/run/openvswitch/ovs-vswitchd.pid --detach || true
+            sleep 2
+        else
+            echo "[OVS-Pod] ovs-vswitchd đã kích hoạt DPDK thành công (dpdk_initialized=true)."
         fi
-        $OVS_DAEMON unix:/var/run/openvswitch/db.sock \
-                    --pidfile=/var/run/openvswitch/ovs-vswitchd.pid --detach
-
-        sleep 2
 
         # 5. Chạy script cấu hình bridge & 2 vhost-user port
         echo "[OVS-Pod] Cấu hình bridge và OpenFlow rules từ manifests/ovs-setup.sh..."

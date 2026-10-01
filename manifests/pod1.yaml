@@ -19,8 +19,10 @@ spec:
       - "3-4"
       - "--file-prefix=pod1"
       - "--single-file-segments"
-      - "--vdev=virtio_user0,path=/var/run/openvswitch/vhost-user-1,server=1"
+      - "--vdev=virtio_user0,path=/var/run/openvswitch/vhost-user-1,server=1,mac=00:00:00:00:00:02"
       - "--rules-file=/app/ovs_flows.conf"
+      - "--ip=192.168.20.2/24"
+      - "--gateway=192.168.20.1"
     resources:
       requests:
         memory: "512Mi"
@@ -39,6 +41,9 @@ spec:
       mountPath: /app/ovs_flows.conf
       subPath: ovs_flows.conf
       readOnly: true
+    - name: app-binary
+      mountPath: /app/pod1_app
+      readOnly: true
   volumes:
   - name: hugepages
     hostPath:
@@ -49,3 +54,6 @@ spec:
   - name: config-volume
     configMap:
       name: ovs-flows
+  - name: app-binary
+    hostPath:
+      path: /mnt/70E63C66E63C2EAA/Users/ADMIN/Desktop/coding/K8s-DPDK-L3-Bridge/pod1-responder/pod1_app

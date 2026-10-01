@@ -39,8 +39,10 @@ int main(int argc, char **argv)
     printf("  MODE: RECEIVE_FROM_OVS (Verifying routed flows)     \n");
     printf("=====================================================\n");
 
-    /* 0. Bóc tách tham số custom --rules-file trước khi chuyển argc/argv cho DPDK EAL */
+    /* 0. Bóc tách tham số custom (--rules-file, --ip, --gateway) trước khi chuyển argc/argv cho DPDK EAL */
     const char *rules_file = "/app/ovs_flows.conf";
+    const char *pod_ip = "192.168.20.2/24";
+    const char *gateway_ip = "192.168.20.1";
     char **eal_argv = (char **)malloc((argc + 1) * sizeof(char *));
     if (!eal_argv) {
         fprintf(stderr, "[Pod1] Lỗi: Không thể cấp phát bộ nhớ cho eal_argv\n");
@@ -52,6 +54,14 @@ int main(int argc, char **argv)
             rules_file = argv[++i];
         } else if (strncmp(argv[i], "--rules-file=", 13) == 0) {
             rules_file = argv[i] + 13;
+        } else if (strcmp(argv[i], "--ip") == 0 && i + 1 < argc) {
+            pod_ip = argv[++i];
+        } else if (strncmp(argv[i], "--ip=", 5) == 0) {
+            pod_ip = argv[i] + 5;
+        } else if (strcmp(argv[i], "--gateway") == 0 && i + 1 < argc) {
+            gateway_ip = argv[++i];
+        } else if (strncmp(argv[i], "--gateway=", 10) == 0) {
+            gateway_ip = argv[i] + 10;
         } else {
             eal_argv[eal_argc++] = argv[i];
         }
@@ -67,8 +77,22 @@ int main(int argc, char **argv)
     free(eal_argv);
 
     uint16_t port_id = 0;
-    printf("[Pod1] Listening on Port %u (Virtio-User from OVS)...\n", port_id);
-    printf("[Pod1] Note: Pure Sink & Flow Inspector mode. All filtering was done by OVS-DPDK.\n");
+
+    struct rte_ether_addr eth_addr;
+    memset(&eth_addr, 0, sizeof(eth_addr));
+    rte_eth_macaddr_get(port_id, &eth_addr);
+
+    printf("-----------------------------------------------------\n");
+    printf("  [Pod1] L3 Interface Configuration:\n");
+    printf("  -> Port %u (Virtio-User Ingress from OVS Egress):\n", port_id);
+    printf("     - Assigned IP  : %s\n", pod_ip);
+    printf("     - Assigned MAC : %02X:%02X:%02X:%02X:%02X:%02X\n",
+           eth_addr.addr_bytes[0], eth_addr.addr_bytes[1],
+           eth_addr.addr_bytes[2], eth_addr.addr_bytes[3],
+           eth_addr.addr_bytes[4], eth_addr.addr_bytes[5]);
+    printf("     - Default GW   : %s (OVS Egress: vhost-user-1)\n", gateway_ip);
+    printf("  -> Note: Pure Sink & Flow Inspector mode. Filtering verified.\n");
+    printf("-----------------------------------------------------\n");
 
     /* 2. Nạp bảng luật động từ cấu hình (Startup Slow-Path) */
     struct flow_table ft;
@@ -170,8 +194,8 @@ int main(int argc, char **argv)
             double rx_pps = (double)period_rx_pkts / elapsed;
             double rx_mbps = ((double)period_rx_bytes * 8.0) / (elapsed * 1e6);
 
-            printf("[Pod1-Sink] RX: %.0f pps (%.2f Mbps) | Protocols: TCP: %" PRIu64 ", UDP: %" PRIu64 ", ICMP: %" PRIu64 ", Other: %" PRIu64 " | Total: %" PRIu64 " pkts\n",
-                   rx_pps, rx_mbps, period_tcp_pkts, period_udp_pkts, period_icmp_pkts, period_other_pkts, total_rx_pkts);
+            printf("[Pod1: %s] RX: %.0f pps (%.2f Mbps) | Protocols: TCP: %" PRIu64 ", UDP: %" PRIu64 ", ICMP: %" PRIu64 ", Other: %" PRIu64 " | Total: %" PRIu64 " pkts\n",
+                   pod_ip, rx_pps, rx_mbps, period_tcp_pkts, period_udp_pkts, period_icmp_pkts, period_other_pkts, total_rx_pkts);
             print_port_hw_stats(port_id, "[Pod1]");
             fflush(stdout);
 

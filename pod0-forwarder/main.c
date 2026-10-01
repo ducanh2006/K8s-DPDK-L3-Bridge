@@ -36,8 +36,10 @@ int main(int argc, char **argv)
     printf("  MODE: OVS_ROUTER/PASSTHROUGH (L3 Routing on vSwitch) \n");
     printf("=====================================================\n");
 
-    /* 0. Bóc tách tham số custom --rules-file trước khi chuyển argc/argv cho DPDK EAL */
+    /* 0. Bóc tách tham số custom (--rules-file, --ip, --gateway) trước khi chuyển argc/argv cho DPDK EAL */
     const char *rules_file = "/app/ovs_flows.conf";
+    const char *pod_ip = "192.168.10.2/24";
+    const char *gateway_ip = "192.168.10.1";
     char **eal_argv = (char **)malloc((argc + 1) * sizeof(char *));
     if (!eal_argv) {
         fprintf(stderr, "[Pod0] Lỗi: Không thể cấp phát bộ nhớ cho eal_argv\n");
@@ -49,6 +51,14 @@ int main(int argc, char **argv)
             rules_file = argv[++i];
         } else if (strncmp(argv[i], "--rules-file=", 13) == 0) {
             rules_file = argv[i] + 13;
+        } else if (strcmp(argv[i], "--ip") == 0 && i + 1 < argc) {
+            pod_ip = argv[++i];
+        } else if (strncmp(argv[i], "--ip=", 5) == 0) {
+            pod_ip = argv[i] + 5;
+        } else if (strcmp(argv[i], "--gateway") == 0 && i + 1 < argc) {
+            gateway_ip = argv[++i];
+        } else if (strncmp(argv[i], "--gateway=", 10) == 0) {
+            gateway_ip = argv[i] + 10;
         } else {
             eal_argv[eal_argc++] = argv[i];
         }
@@ -70,9 +80,22 @@ int main(int argc, char **argv)
     uint16_t pcap_port = 0;
     uint16_t virtio_port = (nb_ports >= 2) ? 1 : 0;
 
-    printf("[Pod0] Port Mapping: Port %u (PCAP Ingress) -> Port %u (OVS Virtio Egress)\n",
-           pcap_port, virtio_port);
-    printf("[Pod0] Note: Transparent passthrough active. L3 Flow Table is offloaded to OVS-DPDK.\n");
+    struct rte_ether_addr eth_addr;
+    memset(&eth_addr, 0, sizeof(eth_addr));
+    rte_eth_macaddr_get(virtio_port, &eth_addr);
+
+    printf("-----------------------------------------------------\n");
+    printf("  [Pod0] L3 Interface Configuration:\n");
+    printf("  -> Port %u (Virtio-User Egress to OVS):\n", virtio_port);
+    printf("     - Assigned IP  : %s\n", pod_ip);
+    printf("     - Assigned MAC : %02X:%02X:%02X:%02X:%02X:%02X\n",
+           eth_addr.addr_bytes[0], eth_addr.addr_bytes[1],
+           eth_addr.addr_bytes[2], eth_addr.addr_bytes[3],
+           eth_addr.addr_bytes[4], eth_addr.addr_bytes[5]);
+    printf("     - Default GW   : %s (OVS Ingress: vhost-user-0)\n", gateway_ip);
+    printf("  -> Port %u (PCAP Ingress Streamer)\n", pcap_port);
+    printf("  -> Note: Transparent passthrough active (Packet content preserved)\n");
+    printf("-----------------------------------------------------\n");
 
     /* 2. Nạp bảng luật động từ cấu hình (Startup Slow-Path) */
     struct flow_table ft;
@@ -159,8 +182,8 @@ int main(int argc, char **argv)
             double tx_pps = (double)period_tx_pkts / elapsed;
             double tx_mbps = ((double)period_tx_bytes * 8.0) / (elapsed * 1e6);
 
-            printf("[Pod0] TX: %.0f pps (%.2f Mbps) | RX: %.0f pps | Total Sent: %" PRIu64 " pkts (%.2f MB)\n",
-                   tx_pps, tx_mbps, rx_pps, total_tx_pkts, (double)total_tx_bytes / (1024.0 * 1024.0));
+            printf("[Pod0: %s] TX: %.0f pps (%.2f Mbps) | RX: %.0f pps | Total Sent: %" PRIu64 " pkts (%.2f MB)\n",
+                   pod_ip, tx_pps, tx_mbps, rx_pps, total_tx_pkts, (double)total_tx_bytes / (1024.0 * 1024.0));
             print_port_hw_stats(virtio_port, "[Pod0]");
             fflush(stdout);
 
